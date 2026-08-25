@@ -10,11 +10,19 @@
       content="WebMCP Design Studio — a person and an AI agent co-create flyers, posters and social posts on a live canvas through WebMCP tools."
     />
     <title>WebMCP Design Studio</title>
-    <!--
-      Origin-trial meta for WebMCP (registered for https://studio.aitherium.com)
-      goes here once the token is issued — until then use
-      chrome://flags/#enable-webmcp-testing in Chrome 149+.
-    -->
+    <script>
+      // Origin-trial token for WebMCP (Chrome 149+, registered for
+      // https://studio.aitherium.com). Injected at build time via
+      // `VITE_OT_TOKEN=<token> npm run build`. Empty when unset — the page then
+      // relies on chrome://flags/#enable-webmcp-testing in Chrome 149+.
+      var __OT_TOKEN__ = '%VITE_OT_TOKEN%';
+      if (__OT_TOKEN__ && __OT_TOKEN__.indexOf('VITE_OT_TOKEN') === -1) {
+        var meta = document.createElement('meta');
+        meta.httpEquiv = 'origin-trial';
+        meta.content = __OT_TOKEN__;
+        document.head.appendChild(meta);
+      }
+    </script>
     <style>
       /* Anti-flash: match the dark theme before CSS loads. */
       html {
