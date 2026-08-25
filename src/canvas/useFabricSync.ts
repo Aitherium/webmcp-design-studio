@@ -38,7 +38,7 @@ function round2(value: number): number {
 function resolveBackground(doc: DesignDoc) {
   const palette = DESIGN_PALETTES[doc.palette];
   if (doc.background === 'gradient') {
-    return new Gradient({
+    return new Gradient<'linear', 'linear'>({
       type: 'linear',
       coords: { x1: 0, y1: 0, x2: doc.size.width, y2: doc.size.height },
       colorStops: [
