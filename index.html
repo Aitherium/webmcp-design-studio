@@ -4,7 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>webmcp-design-studio</title>
+    <meta name="theme-color" content="#000103" />
+    <meta
+      name="description"
+      content="WebMCP Design Studio — a person and an AI agent co-create flyers, posters and social posts on a live canvas through WebMCP tools."
+    />
+    <title>WebMCP Design Studio</title>
+    <!--
+      Origin-trial meta for WebMCP (registered for https://studio.aitherium.com)
+      goes here once the token is issued — until then use
+      chrome://flags/#enable-webmcp-testing in Chrome 149+.
+    -->
+    <style>
+      /* Anti-flash: match the dark theme before CSS loads. */
+      html {
+        background: #000103;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

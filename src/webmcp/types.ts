@@ -1,0 +1,104 @@
+/**
+ * Spec-faithful WebMCP types (from the WebMCP explainer / index.bs IDL).
+ *
+ * `document.modelContext` is the entry point (Chrome 150+); the pre-150
+ * spelling `navigator.modelContext` is the fallback. See registry.ts for the
+ * detection, polyfill.ts for the dev/non-Chrome shim.
+ */
+import type { PendingBatch, DesignDoc } from '../state/doc';
+
+/** `ModelContextTool` — what registerTool accepts (index.bs). */
+export interface ModelContextTool {
+  /** `[a-zA-Z0-9_.-]`, ≤128 chars. Required. */
+  name: string;
+  title?: string;
+  /** Agent-facing description. Required. */
+  description: string;
+  /** JSON Schema object. Required; must be JSON-serializable. */
+  inputSchema: Record<string, unknown>;
+  /**
+   * Receives the validated input object plus an AbortSignal. The return
+   * value is JSON-stringified and handed to the agent as a DOMString.
+   */
+  execute: (input: Record<string, unknown>, options: { signal: AbortSignal }) => Promise<unknown>;
+  annotations?: {
+    /** Tool does not mutate state. */
+    readOnlyHint?: boolean;
+    /** Output may contain untrusted content. */
+    untrustedContentHint?: boolean;
+  };
+}
+
+/** Callback signature of `execute`. */
+export type ToolExecuteCallback = ModelContextTool['execute'];
+
+/** `RegisteredTool` — what getTools() resolves to (index.bs). */
+export interface RegisteredTool {
+  name: string;
+  title?: string;
+  description: string;
+  /** Deep copy of the registration-time schema. */
+  inputSchema: Record<string, unknown>;
+  /** The window that registered the tool. */
+  window: Window | null;
+  /** Origin of the registering document. */
+  origin: string | null;
+  annotations?: { readOnlyHint?: boolean; untrustedContentHint?: boolean };
+}
+
+/** `registerTool(tool, options)` — index.bs. */
+export interface RegisterOptions {
+  /** Origins this tool is exposed to (registerer side of cross-origin). */
+  exposedTo?: string[];
+  /** Aborting this signal unregisters the tool. */
+  signal?: AbortSignal;
+}
+
+export interface GetToolsOptions {
+  /** Origins to include in addition to same-origin documents in the tree. */
+  fromOrigins?: string[];
+}
+
+/**
+ * Our registry entry: a ModelContextTool plus an availability predicate
+ * driving dynamic registration (`available(state)` false → unregistered).
+ */
+export interface ToolDefinition extends ModelContextTool {
+  available?: (state: StudioStateLike) => boolean;
+}
+
+/**
+ * The slice of store state predicates need. Structural only — a predicate
+ * must never read element data.
+ */
+export interface StudioStateLike {
+  docs: readonly DesignDoc[];
+  currentDocId: string | null;
+  pendingBatch: PendingBatch | null;
+}
+
+/** The runtime surface we register against. The real browser API satisfies
+ * this structurally; the polyfill implements it literally. */
+export interface ModelContextSurface {
+  registerTool(tool: ModelContextTool, options?: RegisterOptions): Promise<void>;
+  getTools(options?: GetToolsOptions): Promise<RegisteredTool[]>;
+  executeTool(
+    tool: RegisteredTool | string,
+    input?: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
+  ): Promise<string>;
+  addEventListener(type: 'toolchange', listener: EventListenerOrEventListenerObject): void;
+  removeEventListener(type: 'toolchange', listener: EventListenerOrEventListenerObject): void;
+  /** Present only on our shim — always visible in the UI. */
+  readonly isPolyfill?: boolean;
+}
+
+/** Validate a tool name against the spec charset + length. */
+export function isValidToolName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 128 &&
+    /^[a-zA-Z0-9_.-]+$/.test(name)
+  );
+}

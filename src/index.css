@@ -1,111 +1,356 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+/* App layout + component styles (tokens via brand.css custom properties). */
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
+.app {
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
+  height: 100%;
+  background:
+    radial-gradient(1200px 500px at 20% -10%, rgba(42, 215, 215, 0.07), transparent 60%),
+    radial-gradient(1000px 500px at 90% 110%, rgba(144, 122, 233, 0.06), transparent 60%),
+    var(--bg-deep);
 }
 
-body {
+/* ── Header ─────────────────────────────────────────────── */
+
+.app-header {
+  border-bottom: 1px solid var(--border);
+  padding: 14px 22px;
+  background: rgba(2, 6, 13, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 0 14px rgba(42, 215, 215, 0.35));
+}
+
+.brand-name {
   margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+.brand-tagline {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  max-width: 720px;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+/* ── Main layout ────────────────────────────────────────── */
+
+.app-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 0;
+  min-height: 0;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
+.app-canvas {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding: 18px;
+}
+
+.app-rail {
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  background: rgba(2, 6, 13, 0.6);
+}
+
+/* ── Canvas frame ───────────────────────────────────────── */
+
+.canvas-frame {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.canvas-scroll {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+}
+
+.design-canvas {
+  max-width: 100%;
+  height: auto;
   border-radius: 4px;
-  color: var(--text-h);
+  box-shadow: 0 0 0 1px rgba(238, 238, 238, 0.06), 0 12px 40px rgba(0, 0, 0, 0.5);
+  background: var(--bg-base);
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+.canvas-meta {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.canvas-meta-name {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* ── Batch chips (overlay) ──────────────────────────────── */
+
+.batch-chips {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(112, 221, 177, 0.4);
+  border-radius: 999px;
+  background: rgba(2, 6, 13, 0.92);
+  box-shadow: 0 0 24px rgba(112, 221, 177, 0.12);
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.batch-chips-label {
+  color: var(--text-secondary);
+}
+
+.chip {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.chip:hover {
+  filter: brightness(1.12);
+}
+
+.chip:active {
+  transform: translateY(1px);
+}
+
+.chip-approve {
+  background: var(--success);
+  color: #03150d;
+}
+
+.chip-discard {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.chip-discard:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── StatusBar ──────────────────────────────────────────── */
+
+.statusbar {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.statusbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.badge-real {
+  background: rgba(112, 221, 177, 0.14);
+  color: var(--success);
+  border: 1px solid rgba(112, 221, 177, 0.4);
+}
+
+.badge-polyfill {
+  background: rgba(234, 181, 50, 0.12);
+  color: var(--warn);
+  border: 1px solid rgba(234, 181, 50, 0.4);
+}
+
+.badge-off {
+  background: rgba(255, 145, 137, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 145, 137, 0.4);
+}
+
+.statusbar-tools {
+  color: var(--text-secondary);
+}
+
+.statusbar-runtime {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.statusbar-failures {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 145, 137, 0.5);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 145, 137, 0.07);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.failure-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.failure-name {
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.failure-error {
+  color: var(--text-secondary);
+}
+
+.statusbar-toolnames {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toolchip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ── Rail cards ─────────────────────────────────────────── */
+
+.rail-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--bg-surface);
+}
+
+.rail-card h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+
+.rail-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.rail-card-empty {
+  border-style: dashed;
+}
+
+.rail-card-pending {
+  border-color: rgba(112, 221, 177, 0.45);
+}
+
+.batch-count {
+  font-weight: 600;
+  color: var(--success) !important;
+}
+
+.batch-ops {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-ops li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.batch-ops code {
+  color: var(--accent-primary);
+  background: rgba(42, 215, 215, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.batch-op-id {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.hint {
+  margin-top: 8px !important;
+  color: var(--text-muted) !important;
+  font-size: 12px !important;
+}
+
+.hint code {
+  color: var(--text-secondary);
 }
