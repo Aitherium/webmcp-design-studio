@@ -80,6 +80,13 @@ export default function App() {
           </div>
         </aside>
       </main>
+
+      <footer className="app-footer">
+        <p>
+          Built with the Aitherium aw* stack — aither · awdk · awnode · awconnect · awnix · Claude Code on
+          DeepSeek V4 Flash. No OpenAI APIs were touched in the making of this infrastructure. For moral reasons.
+        </p>
+      </footer>
     </div>
   );
 }

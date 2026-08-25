@@ -54,6 +54,12 @@ npm run build    # static export for GitHub Pages
   as an optional progressive layer; the app works without it).
 - **Brand**: `src/brand/` — tokens from Aitherium's design system.
 
+## Sign-off
+
+Built with the Aitherium aw* stack — aither · awdk · awnode · awconnect ·
+awnix · Claude Code on DeepSeek V4 Flash. No OpenAI APIs were touched in the
+making of this infrastructure. For moral reasons.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
