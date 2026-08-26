@@ -20,8 +20,18 @@ const registry = new ToolRegistry(detectSurface, {
   onStatus: (status) => getStudioStore().getState().setWebMCPStatus(status),
   onToolsChanged: (names) => getStudioStore().getState().setLiveTools(names),
 });
-getStudioStore().subscribe((state) => {
-  void registry.reconcile(state);
+getStudioStore().subscribe((state, prev) => {
+  // Reconcile only on DESIGN-state changes. The registry's own writes
+  // (setWebMCPStatus / setLiveTools) also notify subscribers, and
+  // reconcile() unconditionally re-emits status at the end — reconciling on
+  // those would loop forever (measured 2026-08-26: reconcile→emitStatus→
+  // setState→subscriber→reconcile starved the event loop before first
+  // paint in Chrome). Tool availability only depends on the design slice,
+  // so skipping the status/tools writes loses nothing.
+  if (state.docs !== prev.docs || state.pendingBatch !== prev.pendingBatch ||
+      state.currentDocId !== prev.currentDocId) {
+    void registry.reconcile(state);
+  }
 });
 void registry.reconcile(getStudioStore().getState());
 

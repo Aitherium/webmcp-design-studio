@@ -264,9 +264,28 @@ export const createStudioStore = () =>
       },
 
       setLiveTools(names) {
+        // Skip when unchanged: set() notifies subscribers unconditionally, and
+        // the registry subscriber reconciles on store changes — a no-op write
+        // here would feed the registry's own status writes straight back into
+        // reconcile, an endless microtask loop that starves the event loop
+        // (measured 2026-08-26: the studio hung before first paint in Chrome
+        // with a reconcile→emitStatus→setState→subscriber→reconcile stack).
+        const s = get();
+        if (s.liveToolNames.length === names.length &&
+            names.every((n, i) => s.liveToolNames[i] === n)) {
+          return;
+        }
         set({ liveToolNames: names });
       },
       setWebMCPStatus(status) {
+        const s = get();
+        const cur = s.webmcpStatus;
+        if (cur && cur.surface === status.surface &&
+            cur.failures.length === status.failures.length &&
+            cur.failures.every((f, i) => f.name === status.failures[i].name &&
+                                       f.error === status.failures[i].error)) {
+          return;
+        }
         set({ webmcpStatus: status });
       },
       setRuntimeStatus(text) {

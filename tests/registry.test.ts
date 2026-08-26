@@ -191,3 +191,56 @@ describe('ToolRegistry.reconcile', () => {
     expect(names).toEqual([...ALWAYS_ON].sort());
   });
 });
+
+/**
+ * Regression: reconcile must not feed its own status writes back into
+ * reconcile. The real wiring (main.tsx) subscribes the registry to the
+ * store; reconcile() unconditionally emits status at the end, and zustand
+ * notifies subscribers on every set — so on the old code one reconcile
+ * spawned an endless microtask loop that starved the event loop before
+ * first paint (measured 2026-08-26 in Chrome, stack:
+ * reconcileNow → emitStatus → onStatus → setWebMCPStatus → subscriber →
+ * reconcile). Two guards close it: the store setters skip unchanged values
+ * and the subscriber only reconciles on design-slice changes. This test
+ * drives the REAL store + subscriber wiring and asserts the loop settles.
+ * Mutation check: reverting BOTH guards (old main.tsx wiring + old
+ * setters) makes this test HANG forever — the exact production symptom.
+ */
+it('reconcile settles — no endless status→reconcile loop', async () => {
+  const store = createStudioStore();
+  setStudioStore(store);
+  const surface = new ModelContextPolyfill();
+  const statuses: WebMCPStatus[] = [];
+  const registry = new ToolRegistry(
+    () => surface,
+    {
+      // Real main.tsx wiring: status flows INTO the store, whose notify would
+      // feed the subscriber (and thus reconcile) on broken code.
+      onStatus: (s) => { statuses.push(s); store.getState().setWebMCPStatus(s); },
+      onToolsChanged: () => undefined,
+    },
+  );
+  // main.tsx wiring (design-slice guard included).
+  store.subscribe((state, prev) => {
+    if (state.docs !== prev.docs || state.pendingBatch !== prev.pendingBatch ||
+        state.currentDocId !== prev.currentDocId) {
+      void registry.reconcile(state);
+    }
+  });
+  void registry.reconcile(store.getState());
+
+  // Drain microtasks in a bounded loop; the old code's status writes keep
+  // notifying the subscriber and never settle. The new code settles after
+  // the first reconcile (status identical → setter skips → no notify).
+  for (let i = 0; i < 30; i++) {
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  const settledAt = statuses.length;
+  // Give the loop every chance to keep going on broken code.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(statuses.length).toBe(settledAt);
+  expect(statuses.length).toBeLessThanOrEqual(2); // initial + first emit
+  expect(statuses[0]?.surface).toBe('polyfill');
+  expect(store.getState().webmcpStatus?.surface).toBe('polyfill');
+});
