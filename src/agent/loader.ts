@@ -212,7 +212,14 @@ export const RANGE_PROBE_URL = `${CDN}/Bonsai-4B-Q1_0.gguf`;
 
 async function range206(url: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   try {
-    const res = await fetchImpl(url, { headers: { Range: 'bytes=0-0' } });
+    // Hard timeout: the probe must not hold up tier detection (and with it the
+    // whole boot) on a network where the mirror stalls — measured 2026-08-26,
+    // a phone-class session sat at a blank page while this fetch hung. Tier C
+    // is the correct outcome for "cannot judge in time".
+    const res = await fetchImpl(url, {
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(4000),
+    });
     if (res.status !== 206) return false;
     return /bytes 0-0\//.test(res.headers.get('content-range') ?? '');
   } catch {
