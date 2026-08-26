@@ -30,6 +30,35 @@ export interface WebMCPStatus {
   failures: Array<{ name: string; error: string }>;
 }
 
+/**
+ * On-device agent runtime state (the D3 gating contract).
+ *
+ * - `tier` is the detected device tier: A = full on-device (text + image),
+ *   B = text-only on-device (WebGPU incl. software), C = hosted-only.
+ * - `slot` is the SINGLE-MODEL SLOT: at most one family ('text' | 'image')
+ *   is resident; loading one unloads the other.
+ * - `phase` mirrors the loader: models never auto-load — the consent chip in
+ *   the agent panel is the only thing that moves phase out of 'idle'.
+ * - A failed load marks the tier disabled for the session and is surfaced
+ *   LOUD in the StatusBar (`lastError`).
+ */
+export interface AgentState {
+  tier: 'A' | 'B' | 'C' | null;
+  /** Why the tier was chosen (StatusBar hover / panel detail). */
+  tierReasons: string[];
+  /** Which model family is resident in the single slot. */
+  slot: 'text' | 'image' | null;
+  /** Resident model id (e.g. 'bonsai-4b'). */
+  modelId: string | null;
+  phase: 'idle' | 'loading' | 'ready' | 'generating' | 'error' | 'unavailable';
+  /** 0..100 download/progress while loading. */
+  progress: number | null;
+  progressDetail: string | null;
+  /** First-use consent — models load only after this is true. */
+  consent: boolean;
+  lastError: string | null;
+}
+
 export interface StudioState {
   docs: DesignDoc[];
   currentDocId: string | null;
@@ -40,8 +69,11 @@ export interface StudioState {
   webmcpStatus: WebMCPStatus | null;
   /** Slot for the D3 on-device runtime status. */
   runtimeStatus: string | null;
+  /** On-device agent gating state (tier, single-model slot, consent). */
+  agent: AgentState;
 
   createDesign(input: { name?: string; size?: DesignSizeId; palette?: PaletteId; background?: string }): DesignDoc;
+  setAgent(patch: Partial<AgentState>): void;
   duplicateDesign(name?: string): DesignDoc | null;
   switchDesign(docId: string): void;
   commitBatch(): DesignDoc | null;
@@ -85,6 +117,17 @@ export const createStudioStore = () =>
       liveToolNames: [],
       webmcpStatus: null,
       runtimeStatus: null,
+      agent: {
+        tier: null,
+        tierReasons: [],
+        slot: null,
+        modelId: null,
+        phase: 'idle',
+        progress: null,
+        progressDetail: null,
+        consent: false,
+        lastError: null,
+      },
 
       createDesign(input) {
         const doc = createDesignDoc(input);
@@ -228,6 +271,9 @@ export const createStudioStore = () =>
       },
       setRuntimeStatus(text) {
         set({ runtimeStatus: text });
+      },
+      setAgent(patch) {
+        set((s) => ({ agent: { ...s.agent, ...patch } }));
       },
     };
   });

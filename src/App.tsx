@@ -4,6 +4,7 @@
  */
 import { FabricCanvas } from './canvas/FabricCanvas';
 import { StatusBar } from './dev/StatusBar';
+import { BonsaiChat } from './agent/BonsaiChat';
 import { useStudio } from './state/store';
 
 function BatchCard() {
@@ -70,14 +71,7 @@ export default function App() {
         <aside className="app-rail">
           <StatusBar />
           <BatchCard />
-          <div className="rail-card rail-card-agent">
-            <h2>Agent chat</h2>
-            <p>In-page on-device agent lands in the next milestone.</p>
-            <p className="hint">
-              Until then, drive the judge flow from the console:{' '}
-              <code>await window.__judgeScript()</code> — or ask ChatGPT's browser agent to make a flyer.
-            </p>
-          </div>
+          <BonsaiChat />
         </aside>
       </main>
 

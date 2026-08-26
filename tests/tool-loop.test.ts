@@ -1,0 +1,239 @@
+/**
+ * Tool-loop parsing + execution — the in-page agent's brain.
+ *
+ * Hermes-style <tools> / <tool_call> / <tool_response> rendering and LENIENT
+ * parsing (small models malform XML often); the loop executes calls through
+ * the executor and regenerates, capped at MAX_TOOL_ROUNDS.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  MAX_TOOL_ROUNDS,
+  createToolExecutor,
+  parseToolCalls,
+  renderToolsSystemBlock,
+  runToolLoop,
+  type ToolExecutor,
+} from '../src/agent/loop';
+import type { ChatWorkerLike, WorkerResponse } from '../src/agent/loader';
+
+/* ── parsing ──────────────────────────────────────────────────────────────── */
+
+describe('parseToolCalls — lenient Hermes parsing', () => {
+  it('extracts a well-formed call and leaves the surrounding text', () => {
+    const { calls, rest } = parseToolCalls(
+      'Let me look at the design.\n<tool_call>\n{"name": "get-design-state", "arguments": {}}\n</tool_call>\nDone.',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('get-design-state');
+    // The trailing newline of the call block is consumed with the match — the
+    // surrounding text survives with its own newline (reference behavior).
+    expect(rest).toBe('Let me look at the design.\n\nDone.');
+  });
+
+  it('recovers a truncated call (valid JSON, missing closing tag)', () => {
+    const { calls, rest } = parseToolCalls(
+      '<tool_call>\n{"name": "create-design", "arguments": {"size": "flyer"}}',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('create-design');
+    expect(calls[0].arguments).toEqual({ size: 'flyer' });
+    expect(rest).toBe('');
+  });
+
+  it('a call truncated MID-JSON stays visible (never fabricated)', () => {
+    // The model stopped with the inner object closed but the outer open —
+    // unrepairable, so the raw text must remain in the transcript.
+    const { calls, rest } = parseToolCalls(
+      '<tool_call>\n{"name": "create-design", "arguments": {"size": "flyer"}',
+    );
+    expect(calls).toHaveLength(0);
+    expect(rest).toContain('tool_call');
+    expect(rest).toContain('create-design');
+  });
+
+  it('repairs trailing commas and single-quoted keys (small-model malformations)', () => {
+    const { calls } = parseToolCalls(
+      `<tool_call>{"name": "add-text", "arguments": {"text": "hello", "x": 10,}}</tool_call>`,
+    );
+    expect(calls[0].name).toBe('add-text');
+    expect(calls[0].arguments.text).toBe('hello');
+
+    const { calls: calls2 } = parseToolCalls(
+      `<tool_call>{'name': 'edit-element', 'arguments': {'elementId': 'el_1'}}</tool_call>`,
+    );
+    expect(calls2[0].name).toBe('edit-element');
+    expect(calls2[0].arguments.elementId).toBe('el_1');
+  });
+
+  it('accepts parameters as an alias for arguments', () => {
+    const { calls } = parseToolCalls(
+      `<tool_call>{"name": "undo", "parameters": {"steps": 2}}</tool_call>`,
+    );
+    expect(calls[0].name).toBe('undo');
+    expect(calls[0].arguments).toEqual({ steps: 2 });
+  });
+
+  it('UNPARSEABLE calls stay visible in the transcript (never silent)', () => {
+    const { calls, rest } = parseToolCalls('<tool_call>{"name": }</tool_call>');
+    expect(calls).toHaveLength(0);
+    expect(rest).toContain('tool_call'); // the raw text remains
+  });
+});
+
+describe('renderToolsSystemBlock', () => {
+  it('declares the tools as JSON inside <tools> tags', () => {
+    const block = renderToolsSystemBlock([
+      { name: 'list-designs', description: 'List designs', parameters: { type: 'object', properties: {} } },
+    ]);
+    expect(block).toContain('<tools>');
+    expect(block).toContain('</tools>');
+    expect(block).toContain('"name":"list-designs"');
+    expect(block).toContain('<tool_call>');
+  });
+});
+
+/* ── the loop ─────────────────────────────────────────────────────────────── */
+
+function fakeWorker(replies: Array<{ text: string; tokens?: string[] }>): ChatWorkerLike {
+  let round = 0;
+  let listener: ((msg: WorkerResponse) => void) | null = null;
+  return {
+    post(msg) {
+      if (msg.type !== 'generate') return;
+      const reply = replies[Math.min(round, replies.length - 1)];
+      round += 1;
+      queueMicrotask(() => {
+        for (const t of reply.tokens ?? []) listener?.({ type: 'token', text: t, channel: 'answer' });
+        listener?.({ type: 'done', text: reply.text });
+      });
+    },
+    on(l) {
+      listener = l;
+      return () => {
+        if (listener === l) listener = null;
+      };
+    },
+    interrupt() {},
+    dispose() {},
+  };
+}
+
+function recordingExecutor(calls: Array<{ name: string; args: Record<string, unknown> }>): ToolExecutor {
+  return async (name, args) => {
+    calls.push({ name, args });
+    return `executed ${name}`;
+  };
+}
+
+describe('runToolLoop', () => {
+  it('a plain answer returns immediately with no tool calls', async () => {
+    const worker = fakeWorker([{ text: 'Here is your flyer summary.' }]);
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const result = await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'hi',
+      executor: recordingExecutor(calls),
+    });
+    expect(result.text).toContain('flyer');
+    expect(result.rounds).toBe(1);
+    expect(result.exhausted).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('executes a tool call and hands the response back to the model', async () => {
+    const worker = fakeWorker([
+      {
+        text: '<tool_call>\n{"name": "create-design", "arguments": {"size": "flyer"}}\n</tool_call>',
+        tokens: ['<tool_call>…'],
+      },
+      { text: 'Created the flyer.' },
+    ]);
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const result = await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'make a flyer',
+      executor: recordingExecutor(calls),
+    });
+    expect(calls).toEqual([{ name: 'create-design', args: { size: 'flyer' } }]);
+    expect(result.rounds).toBe(2);
+    expect(result.text).toBe('Created the flyer.');
+    expect(result.toolCalls).toHaveLength(1);
+  });
+
+  it('caps at MAX_TOOL_ROUNDS and reports exhausted', async () => {
+    const loopForever = fakeWorker([
+      { text: '<tool_call>{"name": "create-design", "arguments": {}}</tool_call>' },
+    ]);
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    let warned = false;
+    const result = await runToolLoop({
+      worker: loopForever,
+      systemPrompt: 'sys',
+      userMessage: 'keep going',
+      executor: recordingExecutor(calls),
+      onMaxRounds: () => {
+        warned = true;
+      },
+    });
+    expect(calls.length).toBe(MAX_TOOL_ROUNDS);
+    expect(result.exhausted).toBe(true);
+    expect(warned).toBe(true);
+  });
+
+  it('streams tokens through onToken', async () => {
+    const worker = fakeWorker([{ text: 'hello world', tokens: ['hel', 'lo ', 'world'] }]);
+    let streamed = '';
+    await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'hi',
+      executor: async () => '',
+      onToken: (t) => {
+        streamed += t;
+      },
+    });
+    expect(streamed).toBe('hello world');
+  });
+});
+
+/* ── executor: real WebMCP API first, registry fallback ───────────────────── */
+
+describe('createToolExecutor', () => {
+  it('routes through the REAL WebMCP API when a surface exists', async () => {
+    const executed: Array<[string, unknown]> = [];
+    const surface = {
+      isPolyfill: false,
+      async getTools() {
+        return [{ name: 'add-text', description: 'x', inputSchema: {}, window: null, origin: null }];
+      },
+      async executeTool(tool: { name: string }, input: unknown) {
+        executed.push([tool.name, input]);
+        return '"ok"';
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const exec = createToolExecutor({ surface: surface as never });
+    const out = await exec('add-text', { text: 'hi' });
+    expect(executed).toEqual([['add-text', { text: 'hi' }]]);
+    expect(out).toBe('"ok"');
+  });
+
+  it('a tool missing from the surface is reported honestly (not executed locally)', async () => {
+    const surface = {
+      isPolyfill: false,
+      async getTools() {
+        return [];
+      },
+      executeTool: async () => 'nope',
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const exec = createToolExecutor({ surface: surface as never });
+    const out = await exec('add-text', { text: 'hi' });
+    expect(out).toContain('not registered');
+    expect(out).toContain('add-text');
+  });
+});
