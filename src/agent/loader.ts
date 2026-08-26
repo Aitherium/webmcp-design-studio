@@ -288,7 +288,11 @@ export async function detectTier(opts?: {
 
   let rangeOk = o.range206;
   if (rangeOk === undefined) {
-    rangeOk = await range206(RANGE_PROBE_URL, opts?.fetchImpl);
+    // No adapter → Tier C no matter what the mirror does — the probe is
+    // pointless (and one less network round-trip at boot on GPU-less
+    // devices, where a stalled mirror previously blocked tier detection
+    // entirely — measured 2026-08-26 on a phone-class session).
+    rangeOk = !probe.adapter ? false : await range206(RANGE_PROBE_URL, opts?.fetchImpl);
   }
   probe.range206 = rangeOk;
 
