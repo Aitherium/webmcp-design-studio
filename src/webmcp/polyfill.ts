@@ -115,7 +115,7 @@ export class ModelContextPolyfill extends EventTarget implements ModelContextSur
 
   async executeTool(
     tool: RegisteredTool | string,
-    input?: Record<string, unknown>,
+    input?: Record<string, unknown> | string,
     options?: { signal?: AbortSignal },
   ): Promise<string> {
     const name = typeof tool === 'string' ? tool : tool.name;
@@ -125,7 +125,12 @@ export class ModelContextPolyfill extends EventTarget implements ModelContextSur
     if (signal?.aborted) {
       throw new DOMException('execution aborted', 'AbortError');
     }
-    const result = await reg.tool.execute(input ?? {}, { signal: signal ?? new AbortController().signal });
+    // Chrome 152 (measured D4, 2026-08-25) passes the input to the registered
+    // tool as a JSON STRING; accept both spellings so the polyfill and the
+    // real API behave identically.
+    const parsed =
+      typeof input === 'string' ? (JSON.parse(input) as Record<string, unknown>) : (input ?? {});
+    const result = await reg.tool.execute(parsed, { signal: signal ?? new AbortController().signal });
     return JSON.stringify(result);
   }
 

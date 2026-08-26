@@ -143,7 +143,11 @@ export function createToolExecutor(opts?: {
       if (registered) {
         try {
           // The spec: executeTool resolves to a DOMString (stringified).
-          return await surface.executeTool(registered, args);
+          // Chrome 152 reality (measured D4, 2026-08-25): the SECOND argument
+          // is also a DOMString — a bare object throws
+          // `UnknownError: Failed to parse input arguments`. Stringify here
+          // so the polyfill and the real API agree.
+          return await surface.executeTool(registered, JSON.stringify(args));
         } catch (err) {
           return `tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`;
         }

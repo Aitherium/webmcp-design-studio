@@ -84,7 +84,7 @@ export interface ModelContextSurface {
   getTools(options?: GetToolsOptions): Promise<RegisteredTool[]>;
   executeTool(
     tool: RegisteredTool | string,
-    input?: Record<string, unknown>,
+    input?: Record<string, unknown> | string,
     options?: { signal?: AbortSignal },
   ): Promise<string>;
   addEventListener(type: 'toolchange', listener: EventListenerOrEventListenerObject): void;

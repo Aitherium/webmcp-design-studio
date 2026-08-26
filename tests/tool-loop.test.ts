@@ -217,7 +217,9 @@ describe('createToolExecutor', () => {
     };
     const exec = createToolExecutor({ surface: surface as never });
     const out = await exec('add-text', { text: 'hi' });
-    expect(executed).toEqual([['add-text', { text: 'hi' }]]);
+    // Chrome 152 (measured D4, 2026-08-25) takes the input as a JSON STRING;
+    // the executor must match the real API, not the pre-D4 object spelling.
+    expect(executed).toEqual([['add-text', '{"text":"hi"}']]);
     expect(out).toBe('"ok"');
   });
 
