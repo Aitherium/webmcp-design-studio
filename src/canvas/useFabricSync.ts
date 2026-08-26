@@ -166,8 +166,8 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
             applyingRef.current = true;
             canvas.add(created);
             applyingRef.current = false;
-          } catch {
-            // Unrenderable element (e.g. broken image src) — skip, keep going.
+          } catch (err) {
+            console.error('[fabric-sync] createFabricObject failed', el.type, el.id, err);
           }
         }
       }
