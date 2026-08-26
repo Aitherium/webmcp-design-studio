@@ -9,6 +9,8 @@ on:
       - 'package-lock.json'
       - 'index.html'
       - 'vite.config.ts'
+      - '.env.production'
+      - 'public/**'
       - '.github/workflows/pages-deploy.yml'
   workflow_dispatch:
 
