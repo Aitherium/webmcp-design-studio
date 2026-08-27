@@ -547,13 +547,31 @@ export class AgentLoader {
 
       const ready = new Promise<void>((resolve, reject) => {
         let settled = false;
+        let sawMessage = false;
         const done = (err: Error | null) => {
           if (settled) return;
           settled = true;
+          clearTimeout(noMessageTimer);
           if (err) reject(err);
           else resolve();
         };
+        // A module worker that fails to LOAD (stale MIME cache, import error)
+        // dies silently — no message ever arrives and `ready` never settles,
+        // which used to sit at "loading 0%" forever (measured 2026-08-26).
+        // Any message proves the worker is alive; none within the window
+        // means it never started. Fail LOUD instead of hanging.
+        const noMessageTimer = setTimeout(() => {
+          if (!sawMessage) {
+            done(
+              new Error(
+                'the on-device runtime sent no response for 120s — the worker likely failed to start; ' +
+                  'reload the page and try again',
+              ),
+            );
+          }
+        }, 120_000);
         worker.on((msg) => {
+          sawMessage = true;
           if (msg.type === 'progress') {
             this.emit({
               type: 'progress',

@@ -1,4 +1,4 @@
-/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-26T00:22:25.050Z by AitherOS/dev/tools/build_webml_cdn.mjs */
+/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-27T05:28:12.858Z by AitherOS/dev/tools/build_webml_cdn.mjs */
 
 // AitherOS/apps/AitherVeil/src/lib/bonsai-webgpu/gguf/reader.ts
 var MAX_RANGE_ATTEMPTS = 3;
@@ -1157,6 +1157,208 @@ function siluRef(x) {
 // ../Users/wzns/AppData/Local/Temp/webml-cdn-stage/image-wgsl.gen.ts
 var IMAGE_OPS_WGSL = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n//\n// The four ops the Flux2 MMDiT needs that the LLM kernels do not provide. Every one of\n// them has a CPU counterpart in `image/mmdit.ts`, which is differentially verified\n// against a real reference forward (37 stages, 5e-5), and every one is compared against\n// that counterpart on a real GPU by `e2e/bonsai-image-gpu-differential.mjs`.\n//\n// \u{1F6A8} WHY THESE ARE NEW RATHER THAN REUSED. Three of the four look like kernels that\n// already ship, and reusing those would be silently wrong:\n//\n//   layernorm        NOT rmsnorm.wgsl. RMSNorm does not subtract the mean. Flux2's\n//                    modulated norms are LayerNorm with elementwise_affine=FALSE --\n//                    mean-centred, and with no learnable weight, because the shift and\n//                    scale arrive from the modulation instead. Substituting RMSNorm\n//                    changes every activation and raises nothing.\n//\n//   rope_interleaved NOT rope_imrope.wgsl. That kernel pairs (p, p + rot/2) -- NEOX /\n//                    half-split -- and its own comment records that as a FIX (\"the old\n//                    (2p, 2p+1) pairing scrambled positional phase\"), which is true for\n//                    the LLM and exactly backwards here. Flux2 pairs ADJACENT\n//                    components (2p, 2p+1), from diffusers' use_real_unbind_dim=-1.\n//                    Asserted in both directions by\n//                    `e2e/bonsai-image-kernel-conventions.mjs`.\n//\n//   modulate         x * (1 + scale) + shift, with scale/shift broadcast over tokens.\n//                    Not elementwise.wgsl: the operands have different ranks.\n//\n//   add_gated        x + gate * delta, gate broadcast over tokens. The residual add of\n//                    every block; separate from `modulate` because fusing them would\n//                    force a caller that needs only one to supply dummies for the other.\n//\n// LAYOUT, shared by all four: activations are [token][channel] row-major, and for the\n// RoPE kernel [token][head][dim] -- the reference unflattens the projection to\n// (heads, headDim) on the LAST axis, so head h of token t is contiguous. Reading it as\n// [head][token][dim] transposes silently and is shape-compatible.\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 LayerNorm \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// One workgroup per TOKEN, cooperating over that token's channels. Not one thread per\n// token: dim is 3072 in this model, and a single lane walking it is the one-lane mistake\n// that made attention 8x slower than it had to be.\n//\n// Two passes (mean, then variance) rather than the sum/sum-of-squares trick: at f32 the\n// one-pass form loses precision exactly where the variance is small, and a modulated\n// norm's input is centred by construction.\n\nstruct LnP {\n  dim : u32,\n  eps : f32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       ln_x : array<f32>;\n@group(0) @binding(1) var<storage, read_write> ln_y : array<f32>;\n@group(0) @binding(2) var<uniform>             lnp  : LnP;\n\nvar<workgroup> ln_red : array<f32, 256>;\n\n@compute @workgroup_size(256)\nfn layernorm_main(@builtin(workgroup_id) wg : vec3<u32>,\n                  @builtin(local_invocation_id) lid : vec3<u32>) {\n  let t = wg.x;\n  let base = t * lnp.dim;\n  let tid = lid.x;\n\n  var s : f32 = 0.0;\n  var i : u32 = tid;\n  loop {\n    if (i >= lnp.dim) { break; }\n    s = s + ln_x[base + i];\n    i = i + 256u;\n  }\n  ln_red[tid] = s;\n  workgroupBarrier();\n  var stride : u32 = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { ln_red[tid] = ln_red[tid] + ln_red[tid + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let mean = ln_red[0] / f32(lnp.dim);\n  workgroupBarrier();\n\n  var v : f32 = 0.0;\n  i = tid;\n  loop {\n    if (i >= lnp.dim) { break; }\n    let d = ln_x[base + i] - mean;\n    v = v + d * d;\n    i = i + 256u;\n  }\n  ln_red[tid] = v;\n  workgroupBarrier();\n  stride = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { ln_red[tid] = ln_red[tid] + ln_red[tid + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let inv = inverseSqrt(ln_red[0] / f32(lnp.dim) + lnp.eps);\n  workgroupBarrier();\n\n  // NO learnable affine here on purpose: elementwise_affine=false. The shift and scale\n  // come from `modulate`, and applying one here would double-apply the conditioning.\n  i = tid;\n  loop {\n    if (i >= lnp.dim) { break; }\n    ln_y[base + i] = (ln_x[base + i] - mean) * inv;\n    i = i + 256u;\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 modulate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// y[t, c] = x[t, c] * (1 + scale[c]) + shift[c]\n\nstruct ModP {\n  dim    : u32,\n  tokens : u32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       md_x     : array<f32>;\n@group(0) @binding(1) var<storage, read>       md_shift : array<f32>;\n@group(0) @binding(2) var<storage, read>       md_scale : array<f32>;\n@group(0) @binding(3) var<storage, read_write> md_y     : array<f32>;\n@group(0) @binding(4) var<uniform>             mdp      : ModP;\n\n@compute @workgroup_size(64)\nfn modulate_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                 @builtin(num_workgroups) nwg : vec3<u32>) {\n  let total = mdp.tokens * mdp.dim;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n  let c = idx % mdp.dim;\n  md_y[idx] = md_x[idx] * (1.0 + md_scale[c]) + md_shift[c];\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 add_gated \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// y[t, c] = x[t, c] + gate[c] * delta[t, c]\n\n@group(0) @binding(0) var<storage, read>       ag_x     : array<f32>;\n@group(0) @binding(1) var<storage, read>       ag_delta : array<f32>;\n@group(0) @binding(2) var<storage, read>       ag_gate  : array<f32>;\n@group(0) @binding(3) var<storage, read_write> ag_y     : array<f32>;\n@group(0) @binding(4) var<uniform>             agp      : ModP;\n\n@compute @workgroup_size(64)\nfn add_gated_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                  @builtin(num_workgroups) nwg : vec3<u32>) {\n  let total = agp.tokens * agp.dim;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n  let c = idx % agp.dim;\n  ag_y[idx] = ag_x[idx] + ag_gate[c] * ag_delta[idx];\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 RoPE, INTERLEAVED pairs \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// out[2p]   = x[2p]   * cos[2p]   - x[2p+1] * sin[2p]\n// out[2p+1] = x[2p+1] * cos[2p+1] + x[2p]   * sin[2p+1]\n//\n// cos/sin are per-TOKEN tables of head_dim entries, shared by every head, with each\n// frequency REPEAT-INTERLEAVED (slots 2p and 2p+1 carry the same value) to match\n// `repeat_interleave_real=True`. Reading cos at 2p and 2p+1 separately rather than once\n// is deliberate: it keeps this kernel correct if a caller ever supplies a non-repeated\n// table, and costs nothing (the value is in cache either way).\n//\n// \u{1F6A8} This is NOT rope_imrope.wgsl's pairing. See the header.\n\nstruct RopeP {\n  tokens   : u32,\n  heads    : u32,\n  head_dim : u32,\n  _p0 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       rp_x   : array<f32>;\n@group(0) @binding(1) var<storage, read>       rp_cos : array<f32>;\n@group(0) @binding(2) var<storage, read>       rp_sin : array<f32>;\n@group(0) @binding(3) var<storage, read_write> rp_y   : array<f32>;\n@group(0) @binding(4) var<uniform>             rpp    : RopeP;\n\n@compute @workgroup_size(64)\nfn rope_interleaved_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                         @builtin(num_workgroups) nwg : vec3<u32>) {\n  // one thread per (token, head, PAIR)\n  let pairs = rpp.head_dim / 2u;\n  let total = rpp.tokens * rpp.heads * pairs;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n\n  let pair = idx % pairs;\n  let rem  = idx / pairs;\n  let head = rem % rpp.heads;\n  let tok  = rem / rpp.heads;\n\n  let o = (tok * rpp.heads + head) * rpp.head_dim + pair * 2u;\n  let p = tok * rpp.head_dim + pair * 2u;\n\n  let a = rp_x[o];\n  let b = rp_x[o + 1u];\n  rp_y[o]      = a * rp_cos[p]      - b * rp_sin[p];\n  rp_y[o + 1u] = b * rp_cos[p + 1u] + a * rp_sin[p + 1u];\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 full (non-causal) multi-head attention \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// \u{1F6A8} NEITHER softmax_attn.wgsl NOR softmax_attn_batched.wgsl CAN SERVE THIS MODEL, and\n// the reason is not performance -- both are CAUSAL. An image transformer attends\n// bidirectionally: token 3 must see token 700. Running a causal kernel here masks most\n// of every row, renormalises what is left, and returns a perfectly well-formed tensor.\n// The image would simply be wrong.\n//\n// Two more differences make the reuse impossible rather than merely incorrect: both LLM\n// kernels read K/V from a 4-bit QUANTIZED KV CACHE (this model has no cache -- every\n// token is present at once, in f32), and both implement GQA (this model has 24 query\n// heads and 24 KV heads, so the mapping is the identity).\n//\n// FLASH-STYLE ONLINE SOFTMAX, one workgroup per (token, head). The running max/sum let\n// it stream the key axis in tiles with no O(n^2) score buffer, which matters at 768\n// tokens. Lanes split the key axis when computing scores, and split the HEAD DIM when\n// accumulating the output -- so the per-lane accumulator is a couple of registers rather\n// than a head_dim-wide array in workgroup memory, which at 64 lanes x 128 dims would be\n// 32 KB and exceed the guaranteed limit.\n//\n// Layout is [token][head][dim], matching `image/mmdit.ts attention` -- the reference\n// unflattens the projection to (heads, headDim) on the LAST axis. Reading it as\n// [head][token][dim] transposes silently and is shape-compatible.\n\nconst ATT_WG : u32 = 64u;\n\nstruct AttnFullP {\n  tokens   : u32,\n  heads    : u32,\n  head_dim : u32,\n  scale    : f32,      // 1/sqrt(head_dim)\n};\n\n@group(0) @binding(0) var<storage, read>       af_q : array<f32>;\n@group(0) @binding(1) var<storage, read>       af_k : array<f32>;\n@group(0) @binding(2) var<storage, read>       af_v : array<f32>;\n@group(0) @binding(3) var<storage, read_write> af_y : array<f32>;\n@group(0) @binding(4) var<uniform>             afp  : AttnFullP;\n\nvar<workgroup> af_score : array<f32, 64>;   // one score per lane per tile\nvar<workgroup> af_red   : array<f32, 64>;\nvar<workgroup> af_m     : f32;              // running max\nvar<workgroup> af_l     : f32;              // running sum of exp\n\n@compute @workgroup_size(64)\nfn attn_full_main(@builtin(workgroup_id) wg : vec3<u32>,\n                  @builtin(local_invocation_id) lid : vec3<u32>,\n                  @builtin(num_workgroups) nwg : vec3<u32>) {\n  let pair = wg.x + wg.y * nwg.x;             // (token, head), flattened\n  let total = afp.tokens * afp.heads;\n  if (pair >= total) { return; }\n  let head = pair % afp.heads;\n  let tok  = pair / afp.heads;\n  let hd   = afp.head_dim;\n  let lane = lid.x;\n\n  let qo = (tok * afp.heads + head) * hd;\n\n  if (lane == 0u) { af_m = -3.0e38; af_l = 0.0; }\n  workgroupBarrier();\n\n  // The output accumulator lives in registers: this lane owns dims lane, lane+64, ...\n  // ACC_MAX bounds head_dim at 64*8 = 512; this model uses 128.\n  const ACC_MAX : u32 = 8u;\n  var acc : array<f32, 8>;\n  for (var a : u32 = 0u; a < ACC_MAX; a = a + 1u) { acc[a] = 0.0; }\n\n  var tile : u32 = 0u;\n  loop {\n    if (tile >= afp.tokens) { break; }\n\n    // ---- scores for this tile: lane j handles key tile+lane ----\n    let j = tile + lane;\n    var s : f32 = -3.0e38;\n    if (j < afp.tokens) {\n      let ko = (j * afp.heads + head) * hd;\n      var d : f32 = 0.0;\n      for (var i : u32 = 0u; i < hd; i = i + 1u) { d = d + af_q[qo + i] * af_k[ko + i]; }\n      s = d * afp.scale;\n    }\n    af_score[lane] = s;\n    af_red[lane] = s;\n    workgroupBarrier();\n\n    // ---- tile max ----\n    var stride : u32 = ATT_WG >> 1u;\n    loop {\n      if (stride == 0u) { break; }\n      if (lane < stride) { af_red[lane] = max(af_red[lane], af_red[lane + stride]); }\n      workgroupBarrier();\n      stride = stride >> 1u;\n    }\n    let tile_max = af_red[0];\n    workgroupBarrier();\n\n    // ---- rescale the running state to the new max ----\n    let m_old = af_m;\n    let m_new = max(m_old, tile_max);\n    // exp(-inf - -inf) is NaN, so guard the very first tile where both are -3e38.\n    let rescale = select(exp(m_old - m_new), 0.0, m_old <= -3.0e38);\n    if (lane == 0u) { af_m = m_new; }\n    workgroupBarrier();\n\n    // ---- tile sum of exp ----\n    var e : f32 = 0.0;\n    if (j < afp.tokens) { e = exp(af_score[lane] - m_new); }\n    af_red[lane] = e;\n    af_score[lane] = e;     // reuse as the weight for the accumulation below\n    workgroupBarrier();\n    stride = ATT_WG >> 1u;\n    loop {\n      if (stride == 0u) { break; }\n      if (lane < stride) { af_red[lane] = af_red[lane] + af_red[lane + stride]; }\n      workgroupBarrier();\n      stride = stride >> 1u;\n    }\n    if (lane == 0u) { af_l = af_l * rescale + af_red[0]; }\n    workgroupBarrier();\n\n    // ---- accumulate weighted V over this tile, this lane's dims ----\n    var a : u32 = 0u;\n    loop {\n      let d = lane + a * ATT_WG;\n      if (d >= hd || a >= ACC_MAX) { break; }\n      var sum : f32 = 0.0;\n      for (var t : u32 = 0u; t < ATT_WG; t = t + 1u) {\n        let kj = tile + t;\n        if (kj < afp.tokens) {\n          let vo = (kj * afp.heads + head) * hd;\n          sum = sum + af_score[t] * af_v[vo + d];\n        }\n      }\n      acc[a] = acc[a] * rescale + sum;\n      a = a + 1u;\n    }\n    workgroupBarrier();\n\n    tile = tile + ATT_WG;\n  }\n\n  let inv_l = 1.0 / af_l;\n  var a2 : u32 = 0u;\n  loop {\n    let d = lane + a2 * ATT_WG;\n    if (d >= hd || a2 >= ACC_MAX) { break; }\n    af_y[qo + d] = acc[a2] * inv_l;\n    a2 = a2 + 1u;\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 f32 matmul (x @ W^T) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// y[t, o] = sum_i x[t, i] * W[o, i]   -- torch [out, in] layout, NO bias.\n//\n// This model has no biases anywhere, and W is stored [out, in] row-major, which makes\n// the reduction contiguous in `i` for a fixed output. One workgroup per (token, output),\n// 64 lanes splitting the K axis.\n//\n// f32 on purpose for the FIRST correct dispatch. The shipped weights are Q2_0 and\n// q2_0_q8_0_matmul.wgsl already exists for them, but swapping it in changes the numerics\n// (2-bit weights, quantized activations) so it cannot be differentially compared against\n// the f32 CPU reference that proves this whole path. Correctness first, in the order this\n// codebase already learned: \"the transformer kernels earned their optimisations only\n// after a CPU differential proved them right.\"\n\nstruct MmP {\n  tokens : u32,\n  in_dim : u32,\n  out_dim : u32,\n  _p0 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       mm_x : array<f32>;\n@group(0) @binding(1) var<storage, read>       mm_w : array<f32>;\n@group(0) @binding(2) var<storage, read_write> mm_y : array<f32>;\n@group(0) @binding(3) var<uniform>             mmp  : MmP;\n\nvar<workgroup> mm_red : array<f32, 64>;\n\n@compute @workgroup_size(64)\nfn matmul_main(@builtin(workgroup_id) wg : vec3<u32>,\n               @builtin(local_invocation_id) lid : vec3<u32>,\n               @builtin(num_workgroups) nwg : vec3<u32>) {\n  let pair = wg.x + wg.y * nwg.x;\n  let total = mmp.tokens * mmp.out_dim;\n  if (pair >= total) { return; }\n  let o = pair % mmp.out_dim;\n  let t = pair / mmp.out_dim;\n  let lane = lid.x;\n\n  var s : f32 = 0.0;\n  var i : u32 = lane;\n  loop {\n    if (i >= mmp.in_dim) { break; }\n    s = s + mm_x[t * mmp.in_dim + i] * mm_w[o * mmp.in_dim + i];\n    i = i + 64u;\n  }\n  mm_red[lane] = s;\n  workgroupBarrier();\n  var stride : u32 = 32u;\n  loop {\n    if (stride == 0u) { break; }\n    if (lane < stride) { mm_red[lane] = mm_red[lane] + mm_red[lane + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  if (lane == 0u) { mm_y[pair] = mm_red[0]; }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 SwiGLU, fused \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// y[t, i] = silu(x[t, i]) * x[t, inner + i]   over a FUSED [tokens, 2*inner] input.\n//\n// swiglu.wgsl takes gate and up as two SEPARATE buffers. Flux2's `linear_in` emits both\n// halves in ONE tensor, and a WebGPU bind group cannot alias two overlapping views of the\n// same buffer as two read bindings -- so the split has to happen inside the kernel.\n// Gate is the FIRST half; swapping the halves is dimensionally identical and wrong.\n\nstruct SgP {\n  tokens : u32,\n  inner  : u32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       sg_x : array<f32>;\n@group(0) @binding(1) var<storage, read_write> sg_y : array<f32>;\n@group(0) @binding(2) var<uniform>             sgp  : SgP;\n\n@compute @workgroup_size(64)\nfn swiglu_fused_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                     @builtin(num_workgroups) nwg : vec3<u32>) {\n  let total = sgp.tokens * sgp.inner;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n  let t = idx / sgp.inner;\n  let i = idx % sgp.inner;\n  let base = t * sgp.inner * 2u;\n  let g = sg_x[base + i];\n  sg_y[idx] = (g / (1.0 + exp(-g))) * sg_x[base + sgp.inner + i];\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 per-head RMSNorm (QK-norm) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// y[t, h, i] = x[t, h, i] / sqrt(mean_i(x^2) + eps) * weight[i]\n//\n// NOT rmsnorm.wgsl, which normalises a whole row against a row-wide weight. This\n// normalises EACH HEAD independently over head_dim, with a [head_dim] weight shared by\n// every head \u2014 that is what `attn.norm_q` / `attn.norm_k` are in Flux2, and applying the\n// row-wide kernel would mix all 24 heads into one statistic.\n//\n// Applied BEFORE RoPE (convention 4). One workgroup per (token, head).\n\nstruct RmsHP {\n  tokens   : u32,\n  heads    : u32,\n  head_dim : u32,\n  eps      : f32,\n};\n\n@group(0) @binding(0) var<storage, read>       rh_x : array<f32>;\n@group(0) @binding(1) var<storage, read>       rh_w : array<f32>;\n@group(0) @binding(2) var<storage, read_write> rh_y : array<f32>;\n@group(0) @binding(3) var<uniform>             rhp  : RmsHP;\n\nvar<workgroup> rh_red : array<f32, 64>;\n\n@compute @workgroup_size(64)\nfn rmsnorm_heads_main(@builtin(workgroup_id) wg : vec3<u32>,\n                      @builtin(local_invocation_id) lid : vec3<u32>,\n                      @builtin(num_workgroups) nwg : vec3<u32>) {\n  let pair = wg.x + wg.y * nwg.x;\n  if (pair >= rhp.tokens * rhp.heads) { return; }\n  let hd = rhp.head_dim;\n  let base = pair * hd;          // [token][head][dim] is contiguous per (token, head)\n  let lane = lid.x;\n\n  var s : f32 = 0.0;\n  var i : u32 = lane;\n  loop {\n    if (i >= hd) { break; }\n    let v = rh_x[base + i];\n    s = s + v * v;\n    i = i + 64u;\n  }\n  rh_red[lane] = s;\n  workgroupBarrier();\n  var stride : u32 = 32u;\n  loop {\n    if (stride == 0u) { break; }\n    if (lane < stride) { rh_red[lane] = rh_red[lane] + rh_red[lane + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let inv = inverseSqrt(rh_red[0] / f32(hd) + rhp.eps);\n  workgroupBarrier();\n\n  i = lane;\n  loop {\n    if (i >= hd) { break; }\n    rh_y[base + i] = rh_x[base + i] * inv * rh_w[i];\n    i = i + 64u;\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 strided copy (gather/scatter) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// dst[t*dst_stride + dst_off + j] = src[t*src_stride + src_off + j],  j < width\n//\n// \u{1F6A8} THIS EXISTS BECAUSE copyBufferToBuffer CANNOT BE RECORDED INSIDE AN OPEN COMPUTE\n// PASS. The first runtime queued its slices, concatenations and de-interleaves as\n// buffer copies and replayed them after `pass.end()` -- so every dispatch that CONSUMED\n// one of those buffers read it before it had been written. The kernels were all\n// individually correct on hardware and the assembled model was still wrong, diverging\n// at the first double block.\n//\n// Splitting the compute pass at each copy would also be correct, but the single-stream\n// blocks de-interleave a fused projection per token: at 768 tokens that is ~15,000 pass\n// boundaries per forward. As a kernel it is one dispatch and the whole graph stays in\n// one pass.\n//\n// One thread per (t, j). Every reshape in the MMDiT graph -- token concat, token slice,\n// column range, column join -- is this op with different strides.\n\nstruct CopyP {\n  tokens     : u32,\n  width      : u32,\n  src_stride : u32,\n  src_off    : u32,\n  dst_stride : u32,\n  dst_off    : u32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       cp_src : array<f32>;\n@group(0) @binding(1) var<storage, read_write> cp_dst : array<f32>;\n@group(0) @binding(2) var<uniform>             cpp    : CopyP;\n\n@compute @workgroup_size(64)\nfn copy_strided_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                     @builtin(num_workgroups) nwg : vec3<u32>) {\n  let total = cpp.tokens * cpp.width;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n  let t = idx / cpp.width;\n  let j = idx % cpp.width;\n  cp_dst[t * cpp.dst_stride + cpp.dst_off + j] =\n    cp_src[t * cpp.src_stride + cpp.src_off + j];\n}\n";
 var VAE_OPS_WGSL = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation.\n//\n// THE THREE OPS THE VAE DECODER NEEDS AND THE TRANSFORMER DOES NOT.\n//\n// In-browser image generation was written off as needing a foreign kernel family. It does\n// not. `:8798` serves FLUX.2 Klein 4B, and the giveaway is in its own tensor names \u2014\n// `transformer_blocks.0.attn.to_q` \u2014 MMDiT is a diffusion TRANSFORMER: attention + MLP over\n// latent patches, which the existing kernels already do. Its text encoder is Qwen3-4B, the\n// same architecture family as the Bonsai text models that already run in a visitor's browser.\n//\n// What genuinely has no equivalent is the VAE DECODER, and only three ops of it. From the\n// shipped model's own vae/config.json (AutoencoderKLFlux2):\n//\n//     block_out_channels : [128, 256, 512, 512]\n//     up_block_types     : 4 x UpDecoderBlock2D\n//     layers_per_block   : 2\n//     latent_channels    : 32\n//     norm_num_groups    : 32\n//     act_fn             : silu\n//\n// so the decode graph is: conv_in -> mid(resnet + attn) -> 4 x (2 resnets + 2x upsample)\n// -> GroupNorm -> SiLU -> conv_out(3ch). Attention and SiLU already exist. These are the rest.\n//\n// LAYOUT: NCHW, f32, batch 1 \u2014 one image at a time is what a browser does, and NCHW keeps a\n// channel's plane contiguous, which is what makes GroupNorm's reduction a simple range.\n//\n// PERFORMANCE NOTE, learned the expensive way on softmax_attn_batched: a kernel written as\n// one-thread-per-output looks fine and silently becomes the bottleneck when the tensor grows.\n// The last up block runs at full output resolution, so at 1024x1024x128 that is 134M outputs.\n// conv2d here is one thread per OUTPUT ELEMENT with the reduction inside it \u2014 correct, and\n// deliberately the simple version first, because the transformer kernels earned their\n// optimisations only after a CPU differential proved them right. Optimise after it is correct\n// and after a measurement says which part is slow, not before.\n\nstruct ConvP {\n  in_c   : u32,\n  out_c  : u32,\n  h      : u32,   // input height\n  w      : u32,   // input width\n  k      : u32,   // square kernel size (1 or 3 here)\n  pad    : u32,\n  stride : u32,\n  _p0    : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       x       : array<f32>;  // [in_c*h*w]\n@group(0) @binding(1) var<storage, read>       weight  : array<f32>;  // [out_c*in_c*k*k]\n@group(0) @binding(2) var<storage, read>       bias    : array<f32>;  // [out_c]\n@group(0) @binding(3) var<storage, read_write> y       : array<f32>;  // [out_c*oh*ow]\n@group(0) @binding(4) var<uniform>             p       : ConvP;\n\nfn out_h() -> u32 { return (p.h + 2u * p.pad - p.k) / p.stride + 1u; }\nfn out_w() -> u32 { return (p.w + 2u * p.pad - p.k) / p.stride + 1u; }\n\n/**\n * 2-D convolution, NCHW, one thread per output element.\n *\n * Zero padding is done by SKIPPING out-of-range taps rather than by materialising a padded\n * input. Materialising would allocate another full tensor per layer \u2014 at decoder resolutions\n * that is hundreds of megabytes of pure copy, on a device that is also holding a language\n * model.\n */\n@compute @workgroup_size(64)\nfn conv2d_main(@builtin(global_invocation_id) gid : vec3<u32>,\n               @builtin(num_workgroups) nwg : vec3<u32>) {\n  let oh = out_h();\n  let ow = out_w();\n  let total = p.out_c * oh * ow;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n\n  let ox = idx % ow;\n  let oy = (idx / ow) % oh;\n  let oc = idx / (ow * oh);\n\n  var acc : f32 = bias[oc];\n  for (var ic : u32 = 0u; ic < p.in_c; ic = ic + 1u) {\n    let x_plane = ic * p.h * p.w;\n    let w_base = ((oc * p.in_c) + ic) * p.k * p.k;\n    for (var ky : u32 = 0u; ky < p.k; ky = ky + 1u) {\n      // Signed arithmetic: with pad=1 the first row's taps land at -1, and doing this in\n      // u32 wraps to ~4 billion and reads far out of bounds. WebGPU's robust access would\n      // return 0 there, which LOOKS like correct zero-padding and is not \u2014 it silently\n      // drops the real taps too on the opposite edge.\n      let iy = i32(oy * p.stride) + i32(ky) - i32(p.pad);\n      if (iy < 0 || iy >= i32(p.h)) { continue; }\n      for (var kx : u32 = 0u; kx < p.k; kx = kx + 1u) {\n        let ix = i32(ox * p.stride) + i32(kx) - i32(p.pad);\n        if (ix < 0 || ix >= i32(p.w)) { continue; }\n        acc = acc + x[x_plane + u32(iy) * p.w + u32(ix)] * weight[w_base + ky * p.k + kx];\n      }\n    }\n  }\n  y[idx] = acc;\n}\n\nstruct GroupNormP {\n  c       : u32,\n  h       : u32,\n  w       : u32,\n  groups  : u32,\n  eps     : f32,\n  _p0 : u32, _p1 : u32, _p2 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       gx      : array<f32>;\n@group(0) @binding(1) var<storage, read>       gamma   : array<f32>;  // [c]\n@group(0) @binding(2) var<storage, read>       beta    : array<f32>;  // [c]\n@group(0) @binding(3) var<storage, read_write> gy      : array<f32>;\n@group(0) @binding(4) var<uniform>             gp      : GroupNormP;\n\n/**\n * GroupNorm \u2014 one WORKGROUP per group, cooperating over that group's whole slab.\n *\n * NOT one thread per group. A group at decoder sizes is (c/groups) x h x w elements \u2014 with\n * 128 channels, 32 groups and a 512x512 plane that is over a million values, and a single\n * thread walking it is the same one-lane mistake that made attention 8x slower than it had\n * to be. The mean and variance are a parallel reduction; the normalise pass is grid-strided.\n *\n * Two passes over the slab (mean, then variance) rather than the sum/sum-of-squares trick:\n * at f32 with a million-element reduction the one-pass form loses precision exactly where\n * the variance is small, which is where a VAE's activations live.\n */\nvar<workgroup> red_sum : array<f32, 256>;\n\n@compute @workgroup_size(256)\nfn groupnorm_main(@builtin(workgroup_id) wg : vec3<u32>,\n                  @builtin(local_invocation_id) lid : vec3<u32>) {\n  let g = wg.x;\n  if (g >= gp.groups) { return; }        // uniform across the workgroup \u2014 safe with barriers\n\n  let cpg = gp.c / gp.groups;            // channels per group\n  let plane = gp.h * gp.w;\n  let slab = cpg * plane;                // elements this group owns\n  let base = g * slab;\n  let tid = lid.x;\n\n  // ---- mean ----\n  var s : f32 = 0.0;\n  var i : u32 = tid;\n  loop {\n    if (i >= slab) { break; }\n    s = s + gx[base + i];\n    i = i + 256u;\n  }\n  red_sum[tid] = s;\n  workgroupBarrier();\n  var stride : u32 = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }\n    workgroupBarrier();\n    stride = stride / 2u;\n  }\n  let mean = red_sum[0] / f32(slab);\n  workgroupBarrier();\n\n  // ---- variance ----\n  var v : f32 = 0.0;\n  i = tid;\n  loop {\n    if (i >= slab) { break; }\n    let d = gx[base + i] - mean;\n    v = v + d * d;\n    i = i + 256u;\n  }\n  red_sum[tid] = v;\n  workgroupBarrier();\n  stride = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }\n    workgroupBarrier();\n    stride = stride / 2u;\n  }\n  let inv_std = 1.0 / sqrt(red_sum[0] / f32(slab) + gp.eps);\n  workgroupBarrier();\n\n  // ---- normalise + per-CHANNEL affine ----\n  // gamma/beta are indexed by absolute channel, not by group: a group spans cpg channels and\n  // each has its own scale. Using the group index here is an easy and completely silent\n  // error \u2014 the image comes out plausible and wrong.\n  i = tid;\n  loop {\n    if (i >= slab) { break; }\n    let ch = g * cpg + (i / plane);\n    gy[base + i] = (gx[base + i] - mean) * inv_std * gamma[ch] + beta[ch];\n    i = i + 256u;\n  }\n}\n\nstruct UpP {\n  c : u32,\n  h : u32,\n  w : u32,\n  scale : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       ux : array<f32>;\n@group(0) @binding(1) var<storage, read_write> uy : array<f32>;\n@group(0) @binding(2) var<uniform>             up : UpP;\n\n/**\n * Nearest-neighbour upsample by an integer factor \u2014 what UpDecoderBlock2D does before its\n * convolution (diffusers' Upsample2D default is nearest, and the conv that follows is what\n * turns the blockiness into detail). Bilinear here would be a different model.\n */\n@compute @workgroup_size(64)\nfn upsample_nearest_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                         @builtin(num_workgroups) nwg : vec3<u32>) {\n  let oh = up.h * up.scale;\n  let ow = up.w * up.scale;\n  let total = up.c * oh * ow;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n\n  let ox = idx % ow;\n  let oy = (idx / ow) % oh;\n  let ch = idx / (ow * oh);\n\n  let sx = ox / up.scale;\n  let sy = oy / up.scale;\n  uy[idx] = ux[ch * up.h * up.w + sy * up.w + sx];\n}\n";
+var ENCODER_OPS_WGSL = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n//\n// qwen3-4b TEXT-ENCODER forward kernels (the FLUX.2 Klein conditioning path),\n// assembled as ONE WGSL module so the CDN image bundle can create every pipeline\n// from a single shader module (same pattern as image_ops.wgsl).\n//\n// Provenance of each kernel (all clean-room, ported from the PrismML llama.cpp\n// fork, byte-aligned with kernels/reference.ts and model/ops.ts):\n//   enc_rmsnorm_main ......... rmsnorm.wgsl            (one workgroup per token)\n//   enc_rmsnorm_heads_main ... image_ops.wgsl rmsnorm_heads_main (per (token,head))\n//   enc_quantize_q8_0_main ... quantize_q8_0.wgsl      (activation Q8_0)\n//   enc_q2_0_q8_0_matmul_main  q2_0_q8_0_matmul.wgsl   (Q2_0 weight matmul)\n//   enc_swiglu_main .......... swiglu.wgsl             (silu(gate)*up)\n//   enc_rope_main ........... rope_imrope.wgsl         (NEOX pairing (p, p+rot/2))\n//   enc_attn_main ............ softmax_attn_batched.wgsl PLUS a pad-key mask:\n//     the encoder's causal limit is min(t, nReal-1) \u2014 pad keys never attendable.\n//   enc_add_main / enc_copy_main ... elementwise residual add + hidden-state capture.\n//\n// Model config (from the GGUF KV): hidden 2560, 36 layers, 32 heads, 8 KV heads,\n// head_dim 128, rope_theta 1e6, eps 1e-6, intermediate 9728. Q2_0 weights are the\n// PrismML fork convention: { f16 d; u8 qs[32] } = 34 B/128 weights, LSB-first 2-bit,\n// value (q-1)*d \u2014 identical to reference.ts q2Bits and the LLM runtime's repack.\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 RMSNorm (full dim) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// One workgroup per token row; two-pass reduce over dim; f32 accumulation.\nstruct EncRnP {\n  n    : u32,\n  eps  : f32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       enc_rn_x : array<f32>;  // n_rows * n\n@group(0) @binding(1) var<storage, read>       enc_rn_w : array<f32>;  // n\n@group(0) @binding(2) var<storage, read_write> enc_rn_y : array<f32>;  // n_rows * n\n@group(0) @binding(3) var<uniform>             enc_rnp  : EncRnP;\n\nconst ENC_RN_WG : u32 = 256u;\nvar<workgroup> enc_rn_partial : array<f32, 256>;\n\n@compute @workgroup_size(256)\nfn enc_rmsnorm_main(@builtin(workgroup_id) wg : vec3<u32>,\n                    @builtin(local_invocation_id) lid : vec3<u32>,\n                    @builtin(num_workgroups) nwg : vec3<u32>) {\n  let row = wg.x + wg.y * nwg.x;\n  let n   = enc_rnp.n;\n  let base = row * n;\n  let tid  = lid.x;\n  var ss : f32 = 0.0;\n  var i : u32 = tid;\n  loop {\n    if (i >= n) { break; }\n    let v = enc_rn_x[base + i];\n    ss = ss + v * v;\n    i = i + ENC_RN_WG;\n  }\n  enc_rn_partial[tid] = ss;\n  workgroupBarrier();\n  var stride : u32 = ENC_RN_WG >> 1u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { enc_rn_partial[tid] = enc_rn_partial[tid] + enc_rn_partial[tid + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let mean  = enc_rn_partial[0] / f32(n);\n  let scale = inverseSqrt(mean + enc_rnp.eps);\n  var o : u32 = tid;\n  loop {\n    if (o >= n) { break; }\n    enc_rn_y[base + o] = enc_rn_x[base + o] * scale * enc_rn_w[o];\n    o = o + ENC_RN_WG;\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 RMSNorm per (token, head) over head_dim \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// q_norm (32 heads) and k_norm (8 heads) share one 128-long weight vector.\nstruct EncRhP {\n  tokens   : u32,\n  heads    : u32,\n  head_dim : u32,\n  eps      : f32,\n};\n\n@group(0) @binding(0) var<storage, read>       enc_rh_x : array<f32>;\n@group(0) @binding(1) var<storage, read>       enc_rh_w : array<f32>;\n@group(0) @binding(2) var<storage, read_write> enc_rh_y : array<f32>;\n@group(0) @binding(3) var<uniform>             enc_rhp  : EncRhP;\n\nvar<workgroup> enc_rh_red : array<f32, 64>;\n\n@compute @workgroup_size(64)\nfn enc_rmsnorm_heads_main(@builtin(workgroup_id) wg : vec3<u32>,\n                          @builtin(local_invocation_id) lid : vec3<u32>,\n                          @builtin(num_workgroups) nwg : vec3<u32>) {\n  let pair = wg.x + wg.y * nwg.x;\n  if (pair >= enc_rhp.tokens * enc_rhp.heads) { return; }\n  let hd   = enc_rhp.head_dim;\n  let base = pair * hd;\n  let lane = lid.x;\n  var s : f32 = 0.0;\n  var i : u32 = lane;\n  loop {\n    if (i >= hd) { break; }\n    let v = enc_rh_x[base + i];\n    s = s + v * v;\n    i = i + 64u;\n  }\n  enc_rh_red[lane] = s;\n  workgroupBarrier();\n  var stride : u32 = 32u;\n  loop {\n    if (stride == 0u) { break; }\n    if (lane < stride) { enc_rh_red[lane] = enc_rh_red[lane] + enc_rh_red[lane + stride]; }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let inv = inverseSqrt(enc_rh_red[0] / f32(hd) + enc_rhp.eps);\n  workgroupBarrier();\n  i = lane;\n  loop {\n    if (i >= hd) { break; }\n    enc_rh_y[base + i] = enc_rh_x[base + i] * inv * enc_rh_w[i];\n    i = i + 64u;\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 activation quantize Q8_0 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// One workgroup per 32-block. d = max(|x|)/127 emitted as f16 bits; qs as int8.\nconst ENC_Q8 : u32 = 32u;\n\n@group(0) @binding(0) var<storage, read>       enc_q8_x  : array<f32>;  // n_blocks * 32\n@group(0) @binding(1) var<storage, read_write> enc_q8_d  : array<u32>;  // n_blocks (f16 low 16)\n@group(0) @binding(2) var<storage, read_write> enc_q8_qs : array<u32>;  // n_blocks * 8\n\nvar<workgroup> enc_q8_amax : array<f32, 32>;\nvar<workgroup> enc_q8_q    : array<u32, 32>;\n\n@compute @workgroup_size(32)\nfn enc_quantize_q8_0_main(@builtin(workgroup_id) wg : vec3<u32>,\n                          @builtin(local_invocation_id) lid : vec3<u32>,\n                          @builtin(num_workgroups) nwg : vec3<u32>) {\n  let block = wg.x + wg.y * nwg.x;\n  let lane  = lid.x;\n  let base  = block * ENC_Q8;\n  let x = enc_q8_x[base + lane];\n  enc_q8_amax[lane] = abs(x);\n  workgroupBarrier();\n  var stride : u32 = 16u;\n  loop {\n    if (stride == 0u) { break; }\n    if (lane < stride) { enc_q8_amax[lane] = max(enc_q8_amax[lane], enc_q8_amax[lane + stride]); }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n  let amax  = enc_q8_amax[0];\n  let d_f16 = pack2x16float(vec2<f32>(amax / 127.0, 0.0)) & 0xffffu;\n  let d     = unpack2x16float(d_f16).x;\n  let id    = select(0.0, 1.0 / d, d != 0.0);\n  var q : i32 = i32(round(x * id));\n  q = clamp(q, -127, 127);\n  enc_q8_q[lane] = u32(q) & 0xffu;\n  workgroupBarrier();\n  if (lane == 0u) {\n    enc_q8_d[block] = d_f16;\n    for (var w : u32 = 0u; w < 8u; w = w + 1u) {\n      let o = w * 4u;\n      enc_q8_qs[block * 8u + w] =\n          enc_q8_q[o + 0u]\n        | (enc_q8_q[o + 1u] << 8u)\n        | (enc_q8_q[o + 2u] << 16u)\n        | (enc_q8_q[o + 3u] << 24u);\n    }\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Q2_0 weights x Q8_0 activations matmul \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// One workgroup per 64 output cols of one row; K-tiled; integer accumulation;\n// exactly the fork's ggml_vec_dot_q2_0_q8_0 ordering (see q2_0_q8_0_matmul.wgsl).\nconst ENC_QM_TILE : u32 = 32u;  // Q2_0 blocks per K-tile (32*128 = 4096 K)\n\nstruct EncQmD { K : u32, n_cols : u32, n_rows : u32, col_tiles : u32 };\n\n@group(0) @binding(0) var<storage, read>       enc_qm_w : array<u32>;\n@group(0) @binding(1) var<storage, read>       enc_qm_d : array<u32>;\n@group(0) @binding(2) var<storage, read>       enc_qm_q : array<u32>;\n@group(0) @binding(3) var<storage, read_write> enc_qm_y : array<f32>;\n@group(0) @binding(4) var<uniform>             enc_qmd  : EncQmD;\n\nvar<workgroup> enc_qm_sh_d  : array<u32, 128>;\nvar<workgroup> enc_qm_sh_qs : array<u32, 1024>;\n\nfn enc_q2_byte(block_base : u32, byte_index : u32) -> u32 {\n  let word = enc_qm_w[block_base + (byte_index >> 2u)];\n  return (word >> ((byte_index & 3u) * 8u)) & 0xffu;\n}\n\nfn enc_sext8(b : u32) -> i32 {\n  return (i32(b) ^ 0x80) - 0x80;\n}\n\n@compute @workgroup_size(64)\nfn enc_q2_0_q8_0_matmul_main(@builtin(local_invocation_id) lid : vec3<u32>,\n                             @builtin(workgroup_id) wid : vec3<u32>,\n                             @builtin(num_workgroups) nwg : vec3<u32>) {\n  let local = lid.x;\n  let wg    = wid.x + wid.y * nwg.x;\n  let row   = wg / enc_qmd.col_tiles;\n  if (row >= enc_qmd.n_rows) { return; }\n  let col = (wg % enc_qmd.col_tiles) * 64u + local;\n  let valid = col < enc_qmd.n_cols;\n\n  let n_q2 = enc_qmd.K / 128u;\n  let a_row_q8_base = row * (enc_qmd.K / 32u);\n\n  var result : f32 = 0.0;\n  var c0 : u32 = 0u;\n  loop {\n    if (c0 >= n_q2) { break; }\n    let cn = min(ENC_QM_TILE, n_q2 - c0);\n    let n_q8 = cn * 4u;\n    let q8_base = a_row_q8_base + c0 * 4u;\n    var t : u32 = local;\n    loop { if (t >= n_q8) { break; } enc_qm_sh_d[t] = enc_qm_d[q8_base + t]; t = t + 64u; }\n    t = local;\n    loop { if (t >= n_q8 * 8u) { break; } enc_qm_sh_qs[t] = enc_qm_q[q8_base * 8u + t]; t = t + 64u; }\n    workgroupBarrier();\n\n    if (valid) {\n      var il : u32 = 0u;\n      loop {\n        if (il >= cn) { break; }\n        let i  = c0 + il;\n        let wb = (col * n_q2 + i) * 9u;\n        let d0 = unpack2x16float(enc_qm_w[wb] & 0xffffu).x;\n\n        var block_sum : f32 = 0.0;\n        for (var k : u32 = 0u; k < 4u; k = k + 1u) {\n          let qb    = il * 4u + k;\n          let d1    = unpack2x16float(enc_qm_sh_d[qb] & 0xffffu).x;\n          let qs_sh = qb * 8u;\n          let sbb   = 2u + k * 8u;\n          var acc : i32 = 0;\n          for (var wi : u32 = 0u; wi < 8u; wi = wi + 1u) {\n            let aword = enc_qm_sh_qs[qs_sh + wi];\n            let sbyte = enc_q2_byte(wb, sbb + wi);\n            for (var m : u32 = 0u; m < 4u; m = m + 1u) {\n              let q2 = (sbyte >> (m << 1u)) & 3u;\n              let q8 = enc_sext8((aword >> (m * 8u)) & 0xffu);\n              acc = acc + (i32(q2) - 1) * q8;\n            }\n          }\n          block_sum = block_sum + d1 * f32(acc);\n        }\n        result = result + d0 * block_sum;\n        il = il + 1u;\n      }\n    }\n    workgroupBarrier();\n    c0 = c0 + ENC_QM_TILE;\n  }\n  if (valid) { enc_qm_y[row * enc_qmd.n_cols + col] = result; }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 SwiGLU gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// out[i] = silu(gate[i]) * up[i]; gate/up are the q2_0 matmul outputs.\n@group(0) @binding(0) var<storage, read>       enc_sw_g : array<f32>;\n@group(0) @binding(1) var<storage, read>       enc_sw_u : array<f32>;\n@group(0) @binding(2) var<storage, read_write> enc_sw_y : array<f32>;\n@group(0) @binding(3) var<uniform>             enc_sw_n : u32;\n\nfn enc_silu(z : f32) -> f32 { return z / (1.0 + exp(-z)); }\n\n@compute @workgroup_size(256)\nfn enc_swiglu_main(@builtin(workgroup_id) wg_ : vec3<u32>,\n                   @builtin(local_invocation_id) lid_ : vec3<u32>,\n                   @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let i = (wg_.x + wg_.y * nwg_.x) * 256u + lid_.x;\n  if (i >= enc_sw_n) { return; }\n  enc_sw_y[i] = enc_silu(enc_sw_g[i]) * enc_sw_u[i];\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 RoPE (NEOX half-split pairing) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Pair p touches components (p, p + rot_dim/2); freq = pos * freq_base^(-2p/rot).\n// This is qwen3's rope (verified against the golden: torch rotate_half pairing).\nstruct EncRopeP {\n  n_heads   : u32,\n  head_dim  : u32,\n  rot_dim   : u32,\n  pos_base  : u32,\n  freq_base : f32,\n  scale     : f32,\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read_write> enc_rope_x : array<f32>;\n@group(0) @binding(1) var<uniform>             enc_ropep  : EncRopeP;\n\n@compute @workgroup_size(64)\nfn enc_rope_main(@builtin(workgroup_id) wg_ : vec3<u32>,\n                 @builtin(local_invocation_id) lid_ : vec3<u32>,\n                 @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let pairs_per_head = enc_ropep.rot_dim / 2u;\n  let per_token = enc_ropep.n_heads * pairs_per_head;\n  let idx = (wg_.x + wg_.y * nwg_.x) * 64u + lid_.x;\n  let token = idx / per_token;\n  let rem   = idx % per_token;\n  let head  = rem / pairs_per_head;\n  let pair  = rem % pairs_per_head;\n  let head_base = (token * enc_ropep.n_heads + head) * enc_ropep.head_dim;\n  let i0 = head_base + pair;\n  let i1 = i0 + pairs_per_head;\n  let pos = f32(enc_ropep.pos_base + token) * enc_ropep.scale;\n  let theta = pos * pow(enc_ropep.freq_base, -2.0 * f32(pair) / f32(enc_ropep.rot_dim));\n  let c = cos(theta);\n  let s = sin(theta);\n  let x0 = enc_rope_x[i0];\n  let x1 = enc_rope_x[i1];\n  enc_rope_x[i0] = x0 * c - x1 * s;\n  enc_rope_x[i1] = x0 * s + x1 * c;\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 causal GQA attention + pad-key mask \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// One workgroup per (query token, head); online (flash-style) softmax over the\n// causal key range CLIPPED to the real tokens: query t attends keys\n// [0, min(t, nReal-1)]. Pad keys are never attendable \u2014 that is the differential's\n// winning variant (causal + pad-key-mask, corr 0.9999 on the golden's real rows).\n// q [n_tokens*n_heads*head_dim] post-RoPE; k/v [kv_len*n_heads_kv*head_dim] f32;\n// out [n_tokens*n_heads*head_dim].\nstruct EncAttnP {\n  n_tokens   : u32,\n  n_heads    : u32,\n  n_heads_kv : u32,\n  head_dim   : u32,\n  pos_base   : u32,\n  n_real     : u32,\n  scale      : f32,\n  mode       : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       enc_at_q   : array<u32>;\n@group(0) @binding(1) var<storage, read>       enc_at_k   : array<u32>;\n@group(0) @binding(2) var<storage, read>       enc_at_v   : array<u32>;\n@group(0) @binding(3) var<storage, read_write> enc_at_y   : array<f32>;\n@group(0) @binding(4) var<uniform>             enc_atp    : EncAttnP;\n@group(0) @binding(5) var<storage, read>       enc_at_ks  : array<u32>;  // dummy (f32 mode)\n@group(0) @binding(6) var<storage, read>       enc_at_vs  : array<u32>;  // dummy (f32 mode)\n\nfn enc_readK(e : u32, scale : f32) -> f32 {\n  if (enc_atp.mode == 1u) {\n    let w = e >> 3u;\n    let n = e & 7u;\n    let raw = (enc_at_k[w] >> (n * 4u)) & 0xFu;\n    return (f32(raw) - 8.0) * scale;\n  }\n  return bitcast<f32>(enc_at_k[e]);\n}\nfn enc_readV(e : u32, scale : f32) -> f32 {\n  if (enc_atp.mode == 1u) {\n    let w = e >> 3u;\n    let n = e & 7u;\n    let raw = (enc_at_v[w] >> (n * 4u)) & 0xFu;\n    return (f32(raw) - 8.0) * scale;\n  }\n  return bitcast<f32>(enc_at_v[e]);\n}\n\nconst ENC_AT_WG : u32 = 128u;\nconst ENC_AT_DPT : u32 = 2u;\nvar<workgroup> enc_at_red : array<f32, 128>;\n\n@compute @workgroup_size(128)\nfn enc_attn_main(@builtin(workgroup_id) wg_ : vec3<u32>,\n                 @builtin(local_invocation_id) lid_ : vec3<u32>,\n                 @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let idx = wg_.x + wg_.y * nwg_.x;\n  let total = enc_atp.n_tokens * enc_atp.n_heads;\n  if (idx >= total) { return; }\n  let tid = lid_.x;\n  let hd  = enc_atp.head_dim;\n  let t   = idx / enc_atp.n_heads;\n  let h   = idx % enc_atp.n_heads;\n  let kv_head = h / (enc_atp.n_heads / enc_atp.n_heads_kv);\n\n  let q_base = (t * enc_atp.n_heads + h) * hd;\n  let kv_per_pos = enc_atp.n_heads_kv * hd;\n  // CAUSAL CLIPPED TO REAL KEYS: pad keys (positions >= n_real) are never attended.\n  let last = min(enc_atp.pos_base + t, enc_atp.pos_base + enc_atp.n_real - 1u);\n\n  var qv  : array<f32, 2>;\n  var acc : array<f32, 2>;\n  for (var i : u32 = 0u; i < ENC_AT_DPT; i = i + 1u) {\n    let d = tid + i * ENC_AT_WG;\n    qv[i]  = select(0.0, bitcast<f32>(enc_at_q[q_base + d]), d < hd);\n    acc[i] = 0.0;\n  }\n  var m : f32 = -3.0e38;\n  var l : f32 = 0.0;\n  for (var pos : u32 = 0u; pos <= last; pos = pos + 1u) {\n    var kScale : f32 = 0.0;\n    var vScale : f32 = 0.0;\n    if (enc_atp.mode == 1u) {\n      let sIdx = pos * enc_atp.n_heads_kv + kv_head;\n      kScale = unpack2x16float(enc_at_ks[sIdx]).x;\n      vScale = unpack2x16float(enc_at_vs[sIdx]).x;\n    }\n    let k_base = pos * kv_per_pos + kv_head * hd;\n    var part : f32 = 0.0;\n    for (var i : u32 = 0u; i < ENC_AT_DPT; i = i + 1u) {\n      let d = tid + i * ENC_AT_WG;\n      if (d < hd) { part = part + qv[i] * enc_readK(k_base + d, kScale); }\n    }\n    enc_at_red[tid] = part;\n    workgroupBarrier();\n    var stride : u32 = ENC_AT_WG / 2u;\n    loop {\n      if (stride == 0u) { break; }\n      if (tid < stride) { enc_at_red[tid] = enc_at_red[tid] + enc_at_red[tid + stride]; }\n      workgroupBarrier();\n      stride = stride / 2u;\n    }\n    let s = enc_at_red[0] * enc_atp.scale;\n    let m_new = max(m, s);\n    let corr  = exp(m - m_new);\n    let w     = exp(s - m_new);\n    l = l * corr + w;\n    let v_base = pos * kv_per_pos + kv_head * hd;\n    for (var i : u32 = 0u; i < ENC_AT_DPT; i = i + 1u) {\n      let d = tid + i * ENC_AT_WG;\n      if (d < hd) { acc[i] = acc[i] * corr + w * enc_readV(v_base + d, vScale); }\n    }\n    m = m_new;\n    workgroupBarrier();\n  }\n  let inv = select(0.0, 1.0 / l, l > 0.0);\n  for (var i : u32 = 0u; i < ENC_AT_DPT; i = i + 1u) {\n    let d = tid + i * ENC_AT_WG;\n    if (d < hd) { enc_at_y[q_base + d] = acc[i] * inv; }\n  }\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 elementwise add / copy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// enc_add: y = a + b (residuals). enc_copy: y = x (hidden-state capture).\n@group(0) @binding(0) var<storage, read>       enc_ew_a : array<f32>;\n@group(0) @binding(1) var<storage, read>       enc_ew_b : array<f32>;\n@group(0) @binding(2) var<storage, read_write> enc_ew_y : array<f32>;\n@group(0) @binding(3) var<uniform>             enc_ew_n : u32;\n\n@compute @workgroup_size(256)\nfn enc_add_main(@builtin(workgroup_id) wg_ : vec3<u32>,\n                @builtin(local_invocation_id) lid_ : vec3<u32>,\n                @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let i = (wg_.x + wg_.y * nwg_.x) * 256u + lid_.x;\n  if (i >= enc_ew_n) { return; }\n  enc_ew_y[i] = enc_ew_a[i] + enc_ew_b[i];\n}\n\n@group(0) @binding(0) var<storage, read>       enc_cp_x : array<f32>;\n@group(0) @binding(1) var<storage, read_write> enc_cp_y : array<f32>;\n@group(0) @binding(2) var<uniform>             enc_cp_n : u32;\n\n@compute @workgroup_size(256)\nfn enc_copy_main(@builtin(workgroup_id) wg_ : vec3<u32>,\n                 @builtin(local_invocation_id) lid_ : vec3<u32>,\n                 @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let i = (wg_.x + wg_.y * nwg_.x) * 256u + lid_.x;\n  if (i >= enc_cp_n) { return; }\n  enc_cp_y[i] = enc_cp_x[i];\n}\n";
+
+// AitherOS/apps/AitherVeil/src/lib/bonsai-webgpu/tokenizer/bpe.ts
+function byteToUnicode() {
+  const bs = [];
+  for (let i = 33; i <= 126; i++) bs.push(i);
+  for (let i = 161; i <= 172; i++) bs.push(i);
+  for (let i = 174; i <= 255; i++) bs.push(i);
+  const cs = [...bs];
+  let n = 0;
+  for (let b = 0; b < 256; b++) {
+    if (!bs.includes(b)) {
+      bs.push(b);
+      cs.push(256 + n);
+      n++;
+    }
+  }
+  const map = /* @__PURE__ */ new Map();
+  for (let i = 0; i < bs.length; i++) map.set(bs[i], String.fromCodePoint(cs[i]));
+  return map;
+}
+var TOKEN_TYPE_CONTROL = 3;
+var TOKEN_TYPE_USER_DEFINED = 4;
+function buildTables(tokens, merges, tokenType = []) {
+  const vocab = /* @__PURE__ */ new Map();
+  tokens.forEach((t, i) => vocab.set(t, i));
+  const mergeRank = /* @__PURE__ */ new Map();
+  merges.forEach((m, i) => mergeRank.set(m, i));
+  const byteEncoder = byteToUnicode();
+  const byteDecoder = /* @__PURE__ */ new Map();
+  byteEncoder.forEach((v, k) => byteDecoder.set(v, k));
+  const specialEntries = [];
+  const haveTypes = tokenType.length === tokens.length;
+  tokens.forEach((t, i) => {
+    const isSpecial = haveTypes ? tokenType[i] === TOKEN_TYPE_CONTROL || tokenType[i] === TOKEN_TYPE_USER_DEFINED : t.length >= 5 && t.startsWith("<|") && t.endsWith("|>");
+    if (isSpecial) specialEntries.push([t, i]);
+  });
+  specialEntries.sort((a, b) => b[0].length - a[0].length);
+  const specialTokens = new Map(specialEntries);
+  return { vocab, idToToken: tokens, mergeRank, byteEncoder, byteDecoder, specialTokens };
+}
+function bpeMerge(symbols, mergeRank) {
+  if (symbols.length < 2) return symbols;
+  let word = symbols;
+  for (; ; ) {
+    let bestRank = Infinity;
+    let bestIdx = -1;
+    for (let i = 0; i < word.length - 1; i++) {
+      const rank = mergeRank.get(`${word[i]} ${word[i + 1]}`);
+      if (rank !== void 0 && rank < bestRank) {
+        bestRank = rank;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx === -1) break;
+    word = [
+      ...word.slice(0, bestIdx),
+      word[bestIdx] + word[bestIdx + 1],
+      ...word.slice(bestIdx + 2)
+    ];
+  }
+  return word;
+}
+var PRETOKEN_RE = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+var SPECIAL_RE_CACHE = /* @__PURE__ */ new WeakMap();
+function specialSplitRe(t) {
+  let re = SPECIAL_RE_CACHE.get(t);
+  if (re === void 0) {
+    if (t.specialTokens.size === 0) {
+      re = null;
+    } else {
+      const alt = [...t.specialTokens.keys()].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+      re = new RegExp(alt, "g");
+    }
+    SPECIAL_RE_CACHE.set(t, re);
+  }
+  return re;
+}
+function encodePlain(text, t, ids) {
+  let remaining = text;
+  while (remaining.length > 0) {
+    PRETOKEN_RE.lastIndex = 0;
+    const match = PRETOKEN_RE.exec(remaining);
+    if (!match) break;
+    const piece = match[0];
+    const enc = new TextEncoder();
+    const bytes = enc.encode(piece);
+    const symbols = Array.from(bytes, (b) => t.byteEncoder.get(b));
+    const merged = bpeMerge(symbols, t.mergeRank);
+    for (const tok of merged) {
+      const id = t.vocab.get(tok);
+      if (id !== void 0) ids.push(id);
+      else for (const ch of tok) {
+        const cid = t.vocab.get(ch);
+        if (cid !== void 0) ids.push(cid);
+      }
+    }
+    remaining = remaining.slice(piece.length);
+  }
+}
+function encode(text, t) {
+  const ids = [];
+  const re = specialSplitRe(t);
+  let pos = 0;
+  if (re) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > pos) encodePlain(text.slice(pos, m.index), t, ids);
+      ids.push(t.specialTokens.get(m[0]));
+      pos = m.index + m[0].length;
+    }
+  }
+  if (pos < text.length) encodePlain(text.slice(pos), t, ids);
+  return ids;
+}
+
+// AitherOS/apps/AitherVeil/src/lib/bonsai-webgpu/tokenizer/chat_template.ts
+function renderChatML(messages, addGenerationPrompt = true, tools) {
+  let out = "";
+  if (tools && tools.length > 0) {
+    out += `<|im_start|>system
+`;
+    if (messages[0]?.role === "system") {
+      out += messages[0].content + "\n\n";
+    }
+    out += "# Tools\n\nYou may call one or more functions to assist with the user query.\n\n";
+    out += "You are provided with function signatures within <tools></tools> XML tags:\n";
+    out += "<tools>";
+    for (const tool of tools) {
+      out += "\n" + JSON.stringify(tool);
+    }
+    out += "\n</tools>\n\n";
+    out += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n";
+    out += "<tool_call>\n";
+    out += '{"name": <function-name>, "arguments": <args-json-object>}\n';
+    out += "</tool_call>";
+    out += `<|im_end|>
+`;
+  } else {
+    if (messages[0]?.role === "system") {
+      out += `<|im_start|>system
+${messages[0].content}<|im_end|>
+`;
+    }
+  }
+  const startIdx = tools && tools.length > 0 && messages[0]?.role === "system" ? 1 : !tools && messages[0]?.role === "system" ? 1 : 0;
+  for (let i = startIdx; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role === "user") {
+      out += `<|im_start|>user
+${m.content}<|im_end|>
+`;
+    } else if (m.role === "assistant") {
+      let content = m.content;
+      let reasoning = m.reasoning_content || "";
+      if (reasoning) {
+        out += `<|im_start|>assistant
+<think>
+${reasoning.trim()}
+</think>
+
+`;
+      } else {
+        out += `<|im_start|>assistant
+`;
+      }
+      if (content) {
+        out += content;
+      }
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        for (const toolCall of m.tool_calls) {
+          if (content) out += "\n";
+          const fn = toolCall.function || toolCall;
+          out += "<tool_call>\n";
+          out += JSON.stringify({
+            name: fn.name,
+            arguments: typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : fn.arguments
+          });
+          out += "\n</tool_call>";
+        }
+      }
+      out += `<|im_end|>
+`;
+    } else if (m.role === "tool") {
+      out += `<|im_start|>user
+<tool_response>
+${m.content}
+</tool_response><|im_end|>
+`;
+    }
+  }
+  if (addGenerationPrompt) {
+    out += `<|im_start|>assistant
+<think>
+
+</think>
+
+`;
+  }
+  return out;
+}
 
 // AitherOS/apps/AitherVeil/src/lib/bonsai-webgpu/webml-image.entry.ts
 function mulberry32(seed) {
@@ -1326,16 +1528,391 @@ function halfToF32(h) {
   return sign * (1 + mant / 1024) * 2 ** (exp - 15);
 }
 var encoderReady = false;
-async function encodePrompt(prompt, nImg, seed) {
-  if (!encoderReady) {
+var ENC_LAYERS = 36;
+var ENC_HIDDEN = 2560;
+var ENC_HEADS = 32;
+var ENC_KV_HEADS = 8;
+var ENC_HD = 128;
+var ENC_INTER = 9728;
+var ENC_EPS = 1e-6;
+var ENC_THETA = 1e6;
+var ENC_MAX_TOKENS = 512;
+var ENC_PAD_ID = 151643;
+var ENC_ENTRY = {
+  rmsnorm: "enc_rmsnorm_main",
+  rmsnormHeads: "enc_rmsnorm_heads_main",
+  quantize: "enc_quantize_q8_0_main",
+  q2q8Matmul: "enc_q2_0_q8_0_matmul_main",
+  swiglu: "enc_swiglu_main",
+  rope: "enc_rope_main",
+  attn: "enc_attn_main",
+  add: "enc_add_main",
+  copy: "enc_copy_main"
+};
+function encUniformBytes(words) {
+  const ub = new ArrayBuffer(Math.max(16, Math.ceil(words.length / 4) * 16));
+  const dv = new DataView(ub);
+  words.forEach(([v, isFloat], i) => isFloat ? dv.setFloat32(i * 4, v, true) : dv.setUint32(i * 4, v, true));
+  return ub;
+}
+function repackQ2_0(slice) {
+  const nBlocks = Math.floor(slice.length / 34);
+  const packed = new Uint8Array(nBlocks * 36);
+  for (let b = 0; b < nBlocks; b++) {
+    packed.set(slice.subarray(b * 34, b * 34 + 34), b * 36);
+  }
+  return packed;
+}
+async function createEncoderRuntime(device, url, fetchRange) {
+  const read = (start, length) => fetchRange(start, start + length - 1);
+  const reader = new RangeReader({ url, fetchRange });
+  const parsed = await parseGguf(reader);
+  const tensors = new Map(
+    parsed.tensors.map((t) => [t.name, t])
+  );
+  const kv = parsed.kv;
+  const tokTokens = kv.get("tokenizer.ggml.tokens");
+  if (!tokTokens) {
     throw new Error(
-      'bonsai-image: on-device generation is pending the encoder spike (R1) \u2014 the qwen3-4b-encoder dequant/forward and img_ids construction are not wired yet. Route device:"auto" through the hosted tier until the spike verdict lands.'
+      "bonsai-image: encoder GGUF has no tokenizer.ggml.tokens KV \u2014 the asset at " + url + " is not the R1-T6 build (correct model + tokenizer KV)."
     );
   }
-  void prompt;
-  void nImg;
-  void seed;
-  throw new Error("bonsai-image: encodePrompt is the spike deliverable \u2014 not implemented");
+  const tokMerges = kv.get("tokenizer.ggml.merges") ?? [];
+  const tokType = kv.get("tokenizer.ggml.token_type") ?? [];
+  const tables = buildTables(tokTokens, tokMerges, tokType);
+  const module = device.createShaderModule({ code: ENCODER_OPS_WGSL });
+  const info = await module.getCompilationInfo?.();
+  const errs = (info?.messages ?? []).filter((m) => m.type === "error");
+  if (errs.length) {
+    throw new Error("encoder kernels failed to compile: " + errs.map((e) => `${e.lineNum}: ${e.message}`).join(" | "));
+  }
+  const pipelines = /* @__PURE__ */ new Map();
+  for (const [name, entryPoint] of Object.entries(ENC_ENTRY)) {
+    pipelines.set(name, device.createComputePipeline({
+      layout: "auto",
+      compute: { module, entryPoint }
+    }));
+  }
+  const owned = [];
+  const newBuffer = (bytes, extra = 0) => {
+    const b = device.createBuffer({
+      size: Math.max(16, Math.ceil(bytes / 16) * 16),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | extra
+    });
+    owned.push(b);
+    return b;
+  };
+  const weightCache = /* @__PURE__ */ new Map();
+  const tensorBytes2 = (t) => t.type === 42 /* Q2_0 */ ? t.nElements / 128 * 34 : t.nElements * (t.type === 1 /* F16 */ ? 2 : 4);
+  async function weight(name) {
+    const hit = weightCache.get(name);
+    if (hit) return hit;
+    const t = tensors.get(name);
+    if (!t) throw new Error(`bonsai-image: encoder has no tensor '${name}'`);
+    const abs = parsed.tensorDataBase + t.relOffset;
+    if (t.type === 42 /* Q2_0 */) {
+      const raw = await read(abs, tensorBytes2(t));
+      const payload = repackQ2_0(raw);
+      const b = newBuffer(payload.byteLength);
+      device.queue.writeBuffer(b, 0, payload);
+      weightCache.set(name, b);
+      return b;
+    }
+    if (t.type === 1 /* F16 */) {
+      const raw = await read(abs, tensorBytes2(t));
+      const n = t.nElements;
+      const out = new Float32Array(n);
+      const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+      for (let i = 0; i < n; i++) out[i] = halfToF32(dv.getUint16(i * 2, true));
+      const b = newBuffer(n * 4);
+      device.queue.writeBuffer(b, 0, out.buffer, 0, n * 4);
+      weightCache.set(name, b);
+      return b;
+    }
+    throw new Error(`bonsai-image: encoder tensor '${name}' has unsupported type ${t.type}`);
+  }
+  async function embedRows(ids) {
+    const t = tensors.get("token_embd.weight");
+    if (!t || t.type !== 1 /* F16 */) {
+      throw new Error("bonsai-image: encoder has no F16 token_embd.weight");
+    }
+    const rowBytes = 2 * ENC_HIDDEN;
+    const abs = parsed.tensorDataBase + t.relOffset;
+    const out = new Float32Array(ENC_MAX_TOKENS * ENC_HIDDEN);
+    const cache = /* @__PURE__ */ new Map();
+    for (let i = 0; i < ENC_MAX_TOKENS; i++) {
+      const id = ids[i];
+      let row = cache.get(id);
+      if (!row) {
+        const raw = await read(abs + id * rowBytes, rowBytes);
+        row = new Float32Array(ENC_HIDDEN);
+        const dv = new DataView(raw.buffer, raw.byteOffset, rowBytes);
+        for (let j = 0; j < ENC_HIDDEN; j++) row[j] = halfToF32(dv.getUint16(j * 2, true));
+        cache.set(id, row);
+      }
+      out.set(row, i * ENC_HIDDEN);
+    }
+    return out;
+  }
+  async function warmWeights() {
+    const names = [];
+    for (let l = 0; l < ENC_LAYERS; l++) {
+      const p = `blk.${l}.`;
+      names.push(
+        p + "attn_norm.weight",
+        p + "attn_q.weight",
+        p + "attn_k.weight",
+        p + "attn_v.weight",
+        p + "attn_q_norm.weight",
+        p + "attn_k_norm.weight",
+        p + "attn_output.weight",
+        p + "ffn_norm.weight",
+        p + "ffn_gate.weight",
+        p + "ffn_up.weight",
+        p + "ffn_down.weight"
+      );
+    }
+    let next = 0;
+    const workers = Array.from({ length: 4 }, async () => {
+      while (next < names.length) {
+        const name = names[next++];
+        if (!weightCache.has(name)) await weight(name);
+      }
+    });
+    await Promise.all(workers);
+  }
+  function tokenize(prompt) {
+    const text = renderChatML([{ role: "user", content: prompt }], true);
+    const ids = encode(text, tables);
+    if (ids.length > ENC_MAX_TOKENS) {
+      throw new Error(`bonsai-image: prompt is ${ids.length} tokens; the qwen3-4b encoder caps at ${ENC_MAX_TOKENS}`);
+    }
+    const out = new Uint32Array(ENC_MAX_TOKENS).fill(ENC_PAD_ID);
+    for (let i = 0; i < ids.length; i++) out[i] = ids[i];
+    return { ids: out, nReal: ids.length };
+  }
+  async function encode2(ids, nReal) {
+    await warmWeights();
+    const h0 = await embedRows(ids);
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    const buf = (elems) => newBuffer(elems * 4);
+    const upload = (data) => {
+      const b = newBuffer(data.byteLength);
+      device.queue.writeBuffer(
+        b,
+        0,
+        data.buffer,
+        data.byteOffset,
+        data.byteLength
+      );
+      return b;
+    };
+    const dispatch = (op, bindings, uni, workgroups, uniBinding = bindings.length) => {
+      const p = pipelines.get(op);
+      const entries = [];
+      for (let i = 0; i < bindings.length; i++) {
+        if (uni && i === uniBinding) {
+          const ub = newBuffer(uni.byteLength, GPUBufferUsage.UNIFORM);
+          device.queue.writeBuffer(ub, 0, uni);
+          entries.push({ binding: i, resource: { buffer: ub } });
+          continue;
+        }
+        entries.push({ binding: i, resource: { buffer: bindings[i] } });
+      }
+      if (uni && uniBinding === bindings.length) {
+        const ub = newBuffer(uni.byteLength, GPUBufferUsage.UNIFORM);
+        device.queue.writeBuffer(ub, 0, uni);
+        entries.push({ binding: uniBinding, resource: { buffer: ub } });
+      }
+      pass.setPipeline(p);
+      pass.setBindGroup(
+        0,
+        device.createBindGroup({ layout: p.getBindGroupLayout(0), entries })
+      );
+      const x = Math.min(workgroups, 65535);
+      const y = Math.ceil(Math.max(1, workgroups) / 65535);
+      pass.dispatchWorkgroups(Math.max(1, x), Math.max(1, y));
+    };
+    const rmsnorm = (x, wname) => {
+      const y = buf(ENC_MAX_TOKENS * ENC_HIDDEN);
+      dispatch(
+        "rmsnorm",
+        [x, weightCache.get(wname), y],
+        encUniformBytes([[ENC_HIDDEN, false], [ENC_EPS, true], [0, false], [0, false]]),
+        ENC_MAX_TOKENS
+      );
+      return y;
+    };
+    const rmsnormHeads = (x, wname, heads) => {
+      const y = buf(ENC_MAX_TOKENS * heads * ENC_HD);
+      dispatch(
+        "rmsnormHeads",
+        [x, weightCache.get(wname), y],
+        encUniformBytes([
+          [ENC_MAX_TOKENS, false],
+          [heads, false],
+          [ENC_HD, false],
+          [ENC_EPS, true]
+        ]),
+        ENC_MAX_TOKENS * heads
+      );
+      return y;
+    };
+    const proj = (x, wname, nCols) => {
+      const nRows = ENC_MAX_TOKENS;
+      const K = ENC_HIDDEN;
+      const nBlocks = Math.ceil(nRows * K / 32);
+      const d = buf(nBlocks);
+      const qs = buf(nBlocks * 8);
+      dispatch("quantize", [x, d, qs], null, nBlocks);
+      const y = buf(nRows * nCols);
+      dispatch(
+        "q2q8Matmul",
+        [weightCache.get(wname), d, qs, y],
+        encUniformBytes([
+          [K, false],
+          [nCols, false],
+          [nRows, false],
+          [Math.ceil(nCols / 64), false]
+        ]),
+        nRows * Math.ceil(nCols / 64)
+      );
+      return y;
+    };
+    const projInter = (x, wname, K) => {
+      const nRows = ENC_MAX_TOKENS;
+      const nCols = ENC_INTER;
+      const nBlocks = Math.ceil(nRows * K / 32);
+      const d = buf(nBlocks);
+      const qs = buf(nBlocks * 8);
+      dispatch("quantize", [x, d, qs], null, nBlocks);
+      const y = buf(nRows * nCols);
+      dispatch(
+        "q2q8Matmul",
+        [weightCache.get(wname), d, qs, y],
+        encUniformBytes([
+          [K, false],
+          [nCols, false],
+          [nRows, false],
+          [Math.ceil(nCols / 64), false]
+        ]),
+        nRows * Math.ceil(nCols / 64)
+      );
+      return y;
+    };
+    const rope = (x, heads) => {
+      dispatch(
+        "rope",
+        [x],
+        encUniformBytes([
+          [heads, false],
+          [ENC_HD, false],
+          [ENC_HD, false],
+          [0, false],
+          [ENC_THETA, true],
+          [1, true],
+          [0, false],
+          [0, false]
+        ]),
+        Math.ceil(ENC_MAX_TOKENS * heads * (ENC_HD / 2) / 64)
+      );
+    };
+    const dummyScale = buf(4);
+    const attn = (q, k, v, nReal2) => {
+      const y = buf(ENC_MAX_TOKENS * ENC_HEADS * ENC_HD);
+      dispatch(
+        "attn",
+        [q, k, v, y, dummyScale, dummyScale],
+        encUniformBytes([
+          [ENC_MAX_TOKENS, false],
+          [ENC_HEADS, false],
+          [ENC_KV_HEADS, false],
+          [ENC_HD, false],
+          [0, false],
+          [nReal2, false],
+          [1 / Math.sqrt(ENC_HD), true],
+          [0, false]
+        ]),
+        ENC_MAX_TOKENS * ENC_HEADS,
+        4
+      );
+      return y;
+    };
+    const swiglu = (gate, up) => {
+      const n = ENC_MAX_TOKENS * ENC_INTER;
+      const y = buf(n);
+      dispatch(
+        "swiglu",
+        [gate, up, y],
+        encUniformBytes([[n, false]]),
+        Math.ceil(n / 256)
+      );
+      return y;
+    };
+    const add = (a, b) => {
+      const n = ENC_MAX_TOKENS * ENC_HIDDEN;
+      const y = buf(n);
+      dispatch("add", [a, b, y], encUniformBytes([[n, false]]), Math.ceil(n / 256));
+      return y;
+    };
+    const copy = (x) => {
+      const n = ENC_MAX_TOKENS * ENC_HIDDEN;
+      const y = buf(n);
+      dispatch("copy", [x, y], encUniformBytes([[n, false]]), Math.ceil(n / 256));
+      return y;
+    };
+    let hIn = upload(h0);
+    const captures = [];
+    for (let l = 0; l < ENC_LAYERS; l++) {
+      const p = `blk.${l}.`;
+      const x1 = rmsnorm(hIn, p + "attn_norm.weight");
+      const qRaw = proj(x1, p + "attn_q.weight", ENC_HEADS * ENC_HD);
+      const kRaw = proj(x1, p + "attn_k.weight", ENC_KV_HEADS * ENC_HD);
+      const v = proj(x1, p + "attn_v.weight", ENC_KV_HEADS * ENC_HD);
+      const qN = rmsnormHeads(qRaw, p + "attn_q_norm.weight", ENC_HEADS);
+      const kN = rmsnormHeads(kRaw, p + "attn_k_norm.weight", ENC_KV_HEADS);
+      rope(qN, ENC_HEADS);
+      rope(kN, ENC_KV_HEADS);
+      const at = attn(qN, kN, v, nReal);
+      const attnOut = proj(at, p + "attn_output.weight", ENC_HIDDEN);
+      let hOut = add(hIn, attnOut);
+      const x2 = rmsnorm(hOut, p + "ffn_norm.weight");
+      const gate = projInter(x2, p + "ffn_gate.weight", ENC_HIDDEN);
+      const up = projInter(x2, p + "ffn_up.weight", ENC_HIDDEN);
+      const f = swiglu(gate, up);
+      const down = projInter(f, p + "ffn_down.weight", ENC_INTER);
+      hIn = add(hOut, down);
+      if (l === 9 || l === 18 || l === 27) captures.push(copy(hIn));
+    }
+    pass.end();
+    const mappable = captures.map((src) => {
+      const dst = device.createBuffer({
+        size: Math.max(16, ENC_MAX_TOKENS * ENC_HIDDEN * 4),
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+      enc.copyBufferToBuffer(src, 0, dst, 0, ENC_MAX_TOKENS * ENC_HIDDEN * 4);
+      return dst;
+    });
+    device.queue.submit([enc.finish()]);
+    await Promise.all(mappable.map((b) => b.mapAsync(GPUMapMode.READ)));
+    const caps = mappable.map((b) => new Float32Array(b.getMappedRange().slice(0)));
+    const stacked = new Float32Array(ENC_MAX_TOKENS * ENC_HIDDEN * 3);
+    for (let t = 0; t < ENC_MAX_TOKENS; t++) {
+      stacked.set(caps[0].subarray(t * ENC_HIDDEN, (t + 1) * ENC_HIDDEN), t * ENC_HIDDEN * 3);
+      stacked.set(caps[1].subarray(t * ENC_HIDDEN, (t + 1) * ENC_HIDDEN), t * ENC_HIDDEN * 3 + ENC_HIDDEN);
+      stacked.set(caps[2].subarray(t * ENC_HIDDEN, (t + 1) * ENC_HIDDEN), t * ENC_HIDDEN * 3 + 2 * ENC_HIDDEN);
+    }
+    mappable.forEach((b) => b.unmap());
+    return stacked;
+  }
+  return {
+    encode: encode2,
+    tokenize,
+    destroy: () => {
+      for (const b of owned) b.destroy();
+    }
+  };
 }
 async function createBonsaiImageRuntime(init) {
   const fetchRange = init.fetchRange ?? httpRangeFetcher(init.weightsUrl);
@@ -1384,6 +1961,32 @@ async function createBonsaiImageRuntime(init) {
   }
   let disposed = false;
   const cfg = BONSAI_IMAGE_4B;
+  let encRt = null;
+  async function getEncoder() {
+    if (!encRt) {
+      const encUrl = new URL("./qwen3-4b-encoder.q2_0.gguf", init.weightsUrl).href;
+      progress("encode", 2, "text encoder");
+      encRt = await createEncoderRuntime(device, encUrl, fetchRange);
+    }
+    return encRt;
+  }
+  async function encodePrompt(prompt, nImg, seed, latentH, latentW) {
+    const rt = await getEncoder();
+    const { ids, nReal } = rt.tokenize(prompt);
+    const hidden = await rt.encode(ids, nReal);
+    encoderReady = true;
+    const imgIds = new Float32Array(nImg * 4);
+    for (let p = 0; p < nImg; p++) {
+      imgIds[p * 4] = 0;
+      imgIds[p * 4 + 1] = Math.floor(p / latentW);
+      imgIds[p * 4 + 2] = p % latentW;
+      imgIds[p * 4 + 3] = 0;
+    }
+    const txtIds = new Float32Array(ENC_MAX_TOKENS * 4);
+    for (let t = 0; t < ENC_MAX_TOKENS; t++) txtIds[t * 4 + 3] = t;
+    void seed;
+    return { encoderHiddenStates: hidden, imgIds, txtIds, nTxt: ENC_MAX_TOKENS };
+  }
   async function generate(opts) {
     if (disposed) throw new Error("bonsai-image runtime disposed");
     const width = Math.round(opts.width ?? 256);
@@ -1399,7 +2002,7 @@ async function createBonsaiImageRuntime(init) {
     const latentH = height / 16;
     const latentW = width / 16;
     const nImg = latentH * latentW + 1;
-    const enc = await encodePrompt(opts.prompt, nImg, seed);
+    const enc = await encodePrompt(opts.prompt, nImg, seed, latentH, latentW);
     const mu = muForSeqLen(nImg + enc.nTxt);
     const ts = timesteps(steps, mu);
     let x = seededNormal(seed, nImg * cfg.inChannels);
@@ -1442,6 +2045,7 @@ async function createBonsaiImageRuntime(init) {
     generate,
     dispose: () => {
       disposed = true;
+      encRt?.destroy();
       runtime.destroy();
       device.destroy();
     }
@@ -1451,5 +2055,6 @@ export {
   IMAGE_OPS_WGSL,
   VAE_OPS_WGSL,
   createBonsaiImageRuntime,
+  createEncoderRuntime,
   encoderReady
 };

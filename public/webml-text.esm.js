@@ -1,4 +1,4 @@
-/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-26T00:22:25.050Z by AitherOS/dev/tools/build_webml_cdn.mjs */
+/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-27T05:28:12.858Z by AitherOS/dev/tools/build_webml_cdn.mjs */
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
@@ -4845,14 +4845,23 @@ function tryParseCallBody(body) {
 
 // AitherOS/apps/packages/awkit/src/webml/webml-text.entry.ts
 init_device_class();
-var DEFAULT_ENTRY_URL = new URL("./bonsai-worker-entry.js", import.meta.url).href;
+var DEFAULT_ENTRY_URL = new URL("./bonsai-worker-entry.js?v=2", import.meta.url).href;
 function createBonsaiChatWorker(opts) {
   const entry = opts?.entryUrl ?? DEFAULT_ENTRY_URL;
   const worker = new Worker(entry, { type: "module" });
   const listeners = /* @__PURE__ */ new Set();
+  const fail = (message) => {
+    for (const l of listeners) l({ type: "error", message });
+  };
   worker.addEventListener("message", (e) => {
     const msg = e.data;
     for (const l of listeners) l(msg);
+  });
+  worker.addEventListener("error", (e) => {
+    fail("on-device worker failed to start: " + (e && e.message || "module load error"));
+  });
+  worker.addEventListener("messageerror", () => {
+    fail("on-device worker rejected a message (protocol mismatch)");
   });
   return {
     post: (msg) => worker.postMessage(msg),
