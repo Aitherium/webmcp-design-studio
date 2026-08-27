@@ -1,4 +1,4 @@
-/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-27T05:28:12.858Z by AitherOS/dev/tools/build_webml_cdn.mjs */
+/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-27T16:20:00.046Z by AitherOS/dev/tools/build_webml_cdn.mjs */
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
@@ -9,7 +9,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/reader.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gguf/reader.ts
 function isRetriableStatus(status) {
   return status === 408 || status === 429 || status >= 500;
 }
@@ -130,7 +130,7 @@ function mirroredRangeFetcher(urls) {
 }
 var MAX_RANGE_ATTEMPTS, sleep, RANGE_STALL_TIMEOUT_MS, RangeReader;
 var init_reader = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/reader.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gguf/reader.ts"() {
     "use strict";
     MAX_RANGE_ATTEMPTS = 3;
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -245,7 +245,7 @@ var init_reader = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts
 function openDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -313,7 +313,7 @@ function cachedRangeFetcher(url, inner, onCached) {
 }
 var DB_NAME, STORE, DB_VERSION;
 var init_idb_cache = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts"() {
     "use strict";
     DB_NAME = "bonsai-weights";
     STORE = "ranges";
@@ -321,7 +321,7 @@ var init_idb_cache = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/types.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gguf/types.ts
 function typeTrait(t) {
   const tr = TYPE_TRAITS[t];
   if (!tr) throw new Error(`bonsai-gguf: unsupported ggml type ${t} (not in TYPE_TRAITS)`);
@@ -338,7 +338,7 @@ function tensorNBytes(t, nElements) {
 }
 var TYPE_TRAITS, QK1_0, QK2_0, Q1_0_BYTES, Q2_0_BYTES;
 var init_types = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/types.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gguf/types.ts"() {
     "use strict";
     TYPE_TRAITS = {
       [0 /* F32 */]: { blockSize: 1, typeSize: 4, name: "F32" },
@@ -354,7 +354,7 @@ var init_types = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/parser.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gguf/parser.ts
 function align(x, a) {
   return x + (a - x % a) % a;
 }
@@ -461,17 +461,17 @@ function numberKv(kv, key, fallback) {
 }
 var GGUF_MAGIC;
 var init_parser = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/parser.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gguf/parser.ts"() {
     "use strict";
     init_types();
     GGUF_MAGIC = 1179993927;
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts
 var GgufMetadata;
 var init_metadata = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts"() {
     "use strict";
     GgufMetadata = class {
       constructor(kv) {
@@ -583,10 +583,10 @@ var init_metadata = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/tensors/registry.ts
+// ../../apps/packages/awkit/src/webml/bonsai/tensors/registry.ts
 var TensorRegistry;
 var init_registry = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/tensors/registry.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/tensors/registry.ts"() {
     "use strict";
     TensorRegistry = class {
       constructor(parsed) {
@@ -651,7 +651,7 @@ var init_registry = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/config.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/config.ts
 function deriveDeltaNetDims(arch) {
   const numVHeads = arch.ssmTimeStepRank ?? 0;
   const numKHeads = arch.ssmGroupCount ?? 0;
@@ -801,13 +801,13 @@ function assertLayerSchedule(cfg) {
 }
 var KERNEL_MAX_HEAD_DIM;
 var init_config = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/config.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/config.ts"() {
     "use strict";
     KERNEL_MAX_HEAD_DIM = 256;
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts
+// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts
 function byteToUnicode() {
   const bs = [];
   for (let i = 33; i <= 126; i++) bs.push(i);
@@ -932,7 +932,7 @@ function decode(ids, t) {
 }
 var TOKEN_TYPE_CONTROL, TOKEN_TYPE_USER_DEFINED, PRETOKEN_RE, SPECIAL_RE_CACHE;
 var init_bpe = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts"() {
     "use strict";
     TOKEN_TYPE_CONTROL = 3;
     TOKEN_TYPE_USER_DEFINED = 4;
@@ -941,7 +941,7 @@ var init_bpe = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts
+// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts
 function renderChatML(messages, addGenerationPrompt = true, tools) {
   let out = "";
   if (tools && tools.length > 0) {
@@ -1027,15 +1027,15 @@ ${m.content}
   return out;
 }
 var init_chat_template = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts"() {
     "use strict";
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts
+// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts
 var BonsaiTokenizer;
 var init_load = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts"() {
     "use strict";
     init_bpe();
     init_chat_template();
@@ -1079,10 +1079,10 @@ var init_load = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts
+// ../../apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts
 var BufferUsage, MapMode;
 var init_gpu_min = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts"() {
     "use strict";
     BufferUsage = {
       MAP_READ: 1,
@@ -1096,7 +1096,7 @@ var init_gpu_min = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/tensors/upload.ts
+// ../../apps/packages/awkit/src/webml/bonsai/tensors/upload.ts
 function needsChunking(device, nBytes) {
   return nBytes > device.limits.maxStorageBufferBindingSize;
 }
@@ -1158,7 +1158,7 @@ function alignUp(n, a) {
 }
 var WEBGPU_DEFAULT_MAX_STORAGE_BINDING, GGML_Q1_0, GGML_Q2_0, Q1_0_RAW_BYTES, Q1_0_GPU_BYTES, Q2_0_RAW_BYTES, Q2_0_GPU_BYTES;
 var init_upload = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/tensors/upload.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/tensors/upload.ts"() {
     "use strict";
     init_gpu_min();
     WEBGPU_DEFAULT_MAX_STORAGE_BINDING = 134217728;
@@ -1171,10 +1171,10 @@ var init_upload = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/weights.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/weights.ts
 var WeightStore;
 var init_weights = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/weights.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/weights.ts"() {
     "use strict";
     init_types();
     init_upload();
@@ -1329,10 +1329,10 @@ var init_weights = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts
+// ../../apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts
 var KERNEL_NAMES, PipelineCache;
 var init_pipelines = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts"() {
     "use strict";
     KERNEL_NAMES = [
       "quantize_q8_0",
@@ -1412,13 +1412,13 @@ var init_pipelines = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/runtime.ts
+// ../../apps/packages/awkit/src/webml/bonsai/runtime.ts
 function createBonsaiRuntime(deps) {
   return new BonsaiRuntime(deps);
 }
 var BonsaiRuntime;
 var init_runtime = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/runtime.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/runtime.ts"() {
     "use strict";
     init_reader();
     init_idb_cache();
@@ -1496,7 +1496,7 @@ var init_runtime = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/reference.ts
+// ../../apps/packages/awkit/src/webml/bonsai/kernels/reference.ts
 function f16ToF32(h) {
   const s = (h & 32768) >> 15;
   const e = (h & 31744) >> 10;
@@ -1544,7 +1544,7 @@ function dequantQ2Block(block) {
 }
 var _f32, _u32;
 var init_reference = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/reference.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/kernels/reference.ts"() {
     "use strict";
     init_types();
     _f32 = new Float32Array(1);
@@ -1552,10 +1552,10 @@ var init_reference = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/provenance.ts
+// ../../apps/packages/awkit/src/webml/bonsai/provenance.ts
 var PROVENANCE_MARKER, PROVENANCE_HEADER_TS, PROVENANCE_HEADER_WGSL;
 var init_provenance = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/provenance.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/provenance.ts"() {
     "use strict";
     PROVENANCE_MARKER = "Numerics ported from owner-owned fork";
     PROVENANCE_HEADER_TS = `/* SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
@@ -1571,9 +1571,9 @@ var init_provenance = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/index.ts
+// ../../apps/packages/awkit/src/webml/bonsai/index.ts
 var init_bonsai = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/index.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/index.ts"() {
     "use strict";
     init_runtime();
     init_reader();
@@ -1590,7 +1590,7 @@ var init_bonsai = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/gpu-class.ts
+// ../../apps/packages/awkit/src/webml/bonsai/gpu-class.ts
 function classifyAdapter(hint) {
   if (hint?.isFallbackAdapter === true) return "software";
   const vendor = hint?.vendor?.trim().toLowerCase();
@@ -1616,14 +1616,14 @@ function maxDispatchesPerSubmit(cls, opts) {
 }
 var INTEGRATED_VENDORS, SOFTWARE_VENDORS;
 var init_gpu_class = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/gpu-class.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/gpu-class.ts"() {
     "use strict";
     INTEGRATED_VENDORS = ["intel", "arm", "qualcomm", "imgtec"];
     SOFTWARE_VENDORS = ["microsoft"];
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts
+// ../../apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts
 function ceilDiv(a, b) {
   return Math.floor((a + b - 1) / b);
 }
@@ -1833,7 +1833,7 @@ function align16(n) {
 }
 var activeBatch, submitBudget, deferredDestroy, bufferPool, poolStats, POOL_KEY, STORAGE_USAGE, UNIFORM_USAGE, MAX_WORKGROUPS_PER_DIM, stagingPool;
 var init_dispatch = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts"() {
     "use strict";
     init_gpu_min();
     activeBatch = /* @__PURE__ */ new WeakMap();
@@ -1849,7 +1849,7 @@ var init_dispatch = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/device-class.ts
+// ../../apps/packages/awkit/src/webml/device-class.ts
 function classifyAdapter2(hint) {
   if (hint?.isFallbackAdapter === true) return "software";
   const vendor = hint?.vendor?.trim().toLowerCase();
@@ -1879,7 +1879,7 @@ function autoBootAllowed(hint) {
 }
 var FIRST_TOKEN_FAIL_MS, LOAD_FAIL_MS, INTEGRATED_VENDORS2, SOFTWARE_VENDORS2;
 var init_device_class = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/device-class.ts"() {
+  "../../apps/packages/awkit/src/webml/device-class.ts"() {
     "use strict";
     FIRST_TOKEN_FAIL_MS = 6e4;
     LOAD_FAIL_MS = 18e4;
@@ -1888,7 +1888,7 @@ var init_device_class = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai-models.ts
+// ../../apps/packages/awkit/src/webml/bonsai-models.ts
 function getBonsaiModel(id) {
   return BONSAI_MODELS_INFO.find((m) => m.id === id);
 }
@@ -1920,7 +1920,7 @@ function pickBonsaiContext(model) {
 }
 var HF_PRISM, BONSAI_MIRROR, BONSAI_MODELS_INFO, DEFAULT_BONSAI_MODEL_ID;
 var init_bonsai_models = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai-models.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai-models.ts"() {
     "use strict";
     init_device_class();
     HF_PRISM = "https://huggingface.co/prism-ml";
@@ -1971,14 +1971,14 @@ var init_bonsai_models = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts
+// ../../apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts
 var wgsl_sources_exports = {};
 __export(wgsl_sources_exports, {
   WGSL_SOURCES: () => WGSL_SOURCES
 });
 var CAUSAL_CONV1D, DELTANET, DELTANET_GATE, DELTANET_SEQ, ELEMENTWISE, ELEMENTWISE_INPLACE, KV_QUANT_4BIT, LOGIT_TOPK, Q1_0_DEQUANT, Q1_0_Q8_0_MATMUL, Q2_0_DEQUANT, Q2_0_Q8_0_MATMUL, QUANTIZE_Q8_0, RMSNORM, ROPE_IMROPE, SAMPLING, SOFTMAX_ATTN, SOFTMAX_ATTN_BATCHED, SWIGLU, VAE_OPS, WGSL_SOURCES;
 var init_wgsl_sources = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts"() {
     "use strict";
     CAUSAL_CONV1D = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
@@ -3017,14 +3017,14 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts
 var kv_f32_exports = {};
 __export(kv_f32_exports, {
   F32KvCache: () => F32KvCache
 });
 var F32KvCache;
 var init_kv_f32 = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts"() {
     "use strict";
     init_gpu_min();
     init_dispatch();
@@ -3154,14 +3154,14 @@ var init_kv_f32 = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts
 var ssm_state_exports = {};
 __export(ssm_state_exports, {
   SsmState: () => SsmState
 });
 var SsmState;
 var init_ssm_state = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts"() {
     "use strict";
     init_gpu_min();
     SsmState = class {
@@ -3224,7 +3224,7 @@ var init_ssm_state = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts
 var topk_threshold_exports = {};
 __export(topk_threshold_exports, {
   LOGIT_HIST_BINS: () => LOGIT_HIST_BINS,
@@ -3258,7 +3258,7 @@ function chooseThreshold(hist, lo, hi, k, capacity) {
 }
 var LOGIT_RANGE_LO, LOGIT_RANGE_HI, LOGIT_HIST_BINS, TOPK_GATHER_CAPACITY;
 var init_topk_threshold = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts"() {
     "use strict";
     LOGIT_RANGE_LO = -50;
     LOGIT_RANGE_HI = 50;
@@ -3267,7 +3267,7 @@ var init_topk_threshold = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/ops.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/ops.ts
 var ops_exports = {};
 __export(ops_exports, {
   Q8_BLOCK: () => Q8_BLOCK,
@@ -3714,7 +3714,7 @@ async function dbgStats(ctx, buf, count, label) {
 }
 var F32, Q8_BLOCK, Q8_BYTES_PER_BLOCK, siluScratch, kvScaleScratch, sampleTiming;
 var init_ops = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/ops.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/ops.ts"() {
     "use strict";
     init_dispatch();
     init_types();
@@ -3727,7 +3727,7 @@ var init_ops = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts
 var block_full_attn_exports = {};
 __export(block_full_attn_exports, {
   runFullAttnBlock: () => runFullAttnBlock
@@ -3828,7 +3828,7 @@ async function runFullAttnBlock(ctx, layer, io) {
   residualAdd(ctx, hidden, ffnOut, nTokens * embeddingLength);
 }
 var init_block_full_attn = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts"() {
     "use strict";
     init_dispatch();
     init_ops();
@@ -3836,7 +3836,7 @@ var init_block_full_attn = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts
 var block_deltanet_exports = {};
 __export(block_deltanet_exports, {
   runDeltaNetBlock: () => runDeltaNetBlock
@@ -3976,7 +3976,7 @@ async function runDeltaNetBlock(ctx, layer, io) {
 }
 var CONV_HISTORY;
 var init_block_deltanet = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts"() {
     "use strict";
     init_ops();
     init_dispatch();
@@ -3985,7 +3985,7 @@ var init_block_deltanet = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/layers.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/layers.ts
 function blockTensorNames(kind, layer, ffnNormName) {
   const p = `blk.${layer}.`;
   if (kind === "full-attn" || kind === "dense-attn") {
@@ -4061,12 +4061,12 @@ async function runBlock(ctx, layer, io) {
   }
 }
 var init_layers = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/layers.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/layers.ts"() {
     "use strict";
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts
 var embed_lmhead_exports = {};
 __export(embed_lmhead_exports, {
   embedTokens: () => embedTokens,
@@ -4185,7 +4185,7 @@ async function projectLogits(ctx, hidden, lastTokenIndex, weights, config, vocab
   return logits;
 }
 var init_embed_lmhead = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts"() {
     "use strict";
     init_dispatch();
     init_ops();
@@ -4194,7 +4194,7 @@ var init_embed_lmhead = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai/model/forward.ts
+// ../../apps/packages/awkit/src/webml/bonsai/model/forward.ts
 var forward_exports = {};
 __export(forward_exports, {
   BONSAI_DEBUG: () => BONSAI_DEBUG,
@@ -4323,7 +4323,7 @@ async function decodeStep(ctx, hidden, posBase, tokenizer) {
 }
 var READ_AHEAD_LAYERS, BONSAI_DEBUG;
 var init_forward = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai/model/forward.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai/model/forward.ts"() {
     "use strict";
     init_layers();
     init_embed_lmhead();
@@ -4334,7 +4334,7 @@ var init_forward = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/bonsai-worker-core.ts
+// ../../apps/packages/awkit/src/webml/bonsai-worker-core.ts
 var bonsai_worker_core_exports = {};
 __export(bonsai_worker_core_exports, {
   initBonsaiRuntime: () => initBonsaiRuntime
@@ -4597,7 +4597,7 @@ async function initBonsaiRuntime(scope) {
   } };
 }
 var init_bonsai_worker_core = __esm({
-  "AitherOS/apps/packages/awkit/src/webml/bonsai-worker-core.ts"() {
+  "../../apps/packages/awkit/src/webml/bonsai-worker-core.ts"() {
     "use strict";
     init_bonsai();
     init_gpu_class();
@@ -4607,7 +4607,7 @@ var init_bonsai_worker_core = __esm({
   }
 });
 
-// AitherOS/apps/packages/awkit/src/webml/models.ts
+// ../../apps/packages/awkit/src/webml/models.ts
 var WEBML_MODELS = [
   // Bonsai models via our own clean-room WGSL kernels (ported from the PrismML llama.cpp fork).
   // Aitherium's kernels, running on YOUR GPU, in your browser. Four sizes, all live as of 2026-07-28.
@@ -4680,7 +4680,7 @@ function getWebMLModel(id) {
   return WEBML_MODELS.find((m) => m.id === id);
 }
 
-// AitherOS/apps/packages/awkit/src/webml/worker-core.ts
+// ../../apps/packages/awkit/src/webml/worker-core.ts
 function runWebMLWorker(scope, deps) {
   let runtimeHandler = null;
   async function handleFirstLoad(modelId) {
@@ -4711,7 +4711,12 @@ function runWebMLWorker(scope, deps) {
     const req = e.data;
     if (!runtimeHandler) {
       if (req.type === "load") {
-        void handleFirstLoad(req.modelId);
+        void handleFirstLoad(req.modelId).catch((err) => {
+          scope.postMessage({
+            type: "error",
+            message: "runtime failed to start: " + (err instanceof Error ? err.message : String(err))
+          });
+        });
       }
     } else {
       runtimeHandler(req);
@@ -4786,10 +4791,10 @@ async function initBonsaiRuntime2(scope) {
   };
 }
 
-// AitherOS/apps/packages/awkit/src/webml/webml-text.entry.ts
+// ../../apps/packages/awkit/src/webml/webml-text.entry.ts
 init_bonsai_models();
 
-// AitherOS/apps/packages/awkit/src/webml/tool-loop.ts
+// ../../apps/packages/awkit/src/webml/tool-loop.ts
 var MAX_TOOL_ROUNDS = 3;
 function renderToolsSystemBlock(specs) {
   let out = "You may call functions to help answer the user.\n\n";
@@ -4843,7 +4848,7 @@ function tryParseCallBody(body) {
   return null;
 }
 
-// AitherOS/apps/packages/awkit/src/webml/webml-text.entry.ts
+// ../../apps/packages/awkit/src/webml/webml-text.entry.ts
 init_device_class();
 var DEFAULT_ENTRY_URL = new URL("./bonsai-worker-entry.js?v=2", import.meta.url).href;
 function createBonsaiChatWorker(opts) {
