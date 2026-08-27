@@ -183,8 +183,16 @@ export function installWebMCPAdapter(options?: { canvas?: HTMLCanvasElement | nu
     tools,
     usingPolyfill: surface instanceof ModelContextPolyfill,
   };
+  // window.__webmcpAdapter is the STABLE handle: the IIFE wrapper assigns the
+  // module namespace to window.WebMCPAdapter AFTER the module body boots (so
+  // that global is the exports object, not the handle), but it never touches
+  // __webmcpAdapter. Consumers: `window.WebMCPAdapter.default?.() ?? window.__webmcpAdapter`.
   Object.defineProperty(window, '__webmcpAdapter', { value: handle, configurable: true });
-  (window as unknown as { WebMCPAdapter?: WebMCPAdapterHandle }).WebMCPAdapter = handle;
+  try {
+    (window as unknown as { WebMCPAdapter?: unknown }).WebMCPAdapter = handle;
+  } catch {
+    // best effort — the wrapper may clobber this one; __webmcpAdapter is canonical
+  }
   return handle;
 }
 

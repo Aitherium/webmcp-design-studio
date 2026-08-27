@@ -136,15 +136,16 @@
         const pill = document.getElementById('surface-pill');
         const textInput = document.getElementById('text-input');
 
-        // The bundle's IIFE wrapper assigns the module namespace to the global
-        // AFTER the module body boots (which also assigns the handle), so the
-        // global may be the handle OR the namespace — resolve both shapes.
-        const adapter = () => {
-          const g = window.WebMCPAdapter;
-          if (!g) return null;
-          if (g.surface) return g;
-          return typeof g.default === 'function' ? g.default() : g;
-        };
+        // The bundle's IIFE wrapper assigns the module namespace to
+        // window.WebMCPAdapter AFTER the module body boots (so that global may
+        // be the namespace), while window.__webmcpAdapter is the stable handle.
+        const adapter = () => window.__webmcpAdapter
+          ?? (() => {
+            const g = window.WebMCPAdapter;
+            if (!g) return null;
+            if (g.surface) return g;
+            return typeof g.default === 'function' ? g.default() : g;
+          })();
         const flash = () => {
           if (adapter()?.driver) { adapter().driver.draw(); }
         };
