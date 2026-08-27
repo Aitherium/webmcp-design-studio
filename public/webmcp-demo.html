@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebMCP Design Studio — extension demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1520;
+        --panel: #131f2e;
+        --border: #2a3d52;
+        --text: #e8eef4;
+        --muted: #8fa3b8;
+        --accent: #5ab8e8;
+        --dash: #2563eb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, sans-serif;
+        line-height: 1.5;
+      }
+      header {
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      header h1 { font-size: 17px; margin: 0; }
+      header code { color: var(--accent); font-size: 12px; }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 18px;
+        padding: 18px 24px;
+        max-width: 1200px;
+      }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      .stage {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        background: #fff;
+        border-radius: 8px;
+        display: block;
+      }
+      .toolbox { display: flex; flex-direction: column; gap: 10px; }
+      .toolbox h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+      .toolbox button {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .toolbox button:hover { border-color: var(--accent); }
+      .toolbox input[type="text"] {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        width: 100%;
+      }
+      .status {
+        font-family: ui-monospace, monospace;
+        font-size: 11.5px;
+        color: var(--muted);
+        background: rgba(0, 0, 0, 0.25);
+        border-radius: 8px;
+        padding: 8px 10px;
+        white-space: pre-wrap;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .pill-real { color: #70ddb1; border-color: rgba(112, 221, 177, 0.5); }
+      .pill-shim { color: #eab532; border-color: rgba(234, 181, 50, 0.5); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>WebMCP Design Studio — extension demo</h1>
+      <span id="surface-pill" class="pill">detecting…</span>
+      <code>paste URL: /webmcp-adapter.js</code>
+    </header>
+    <main>
+      <section class="stage">
+        <canvas id="webmcp-canvas" width="1024" height="768"></canvas>
+      </section>
+      <aside class="toolbox">
+        <h2>Extension tools (registered via modelContext)</h2>
+        <button id="btn-create">create-design (blank 1024×768)</button>
+        <input id="text-input" type="text" placeholder="text to add…" value="Hello from the extension" />
+        <button id="btn-add">add-text → pending batch</button>
+        <button id="btn-undo">undo (pop pending)</button>
+        <button id="btn-approve">approve-batch (commit)</button>
+        <button id="btn-tools">list tools (surface.getTools)</button>
+        <div class="status" id="status">adapter loading…</div>
+        <p style="font-size: 11.5px; color: var(--muted); margin: 0">
+          Dashed elements are PENDING — an agent's edits stay uncommitted until a
+          person approves. A WebMCP agent visiting this page sees the six tools
+          and can drive this canvas directly.
+        </p>
+      </aside>
+    </main>
+    <script src="/webmcp-adapter.js"></script>
+    <script>
+      (() => {
+        const status = document.getElementById('status');
+        const log = (line) => { status.textContent = line + '\n' + status.textContent; };
+        const pill = document.getElementById('surface-pill');
+        const textInput = document.getElementById('text-input');
+
+        // The bundle's IIFE wrapper assigns the module namespace to the global
+        // AFTER the module body boots (which also assigns the handle), so the
+        // global may be the handle OR the namespace — resolve both shapes.
+        const adapter = () => {
+          const g = window.WebMCPAdapter;
+          if (!g) return null;
+          if (g.surface) return g;
+          return typeof g.default === 'function' ? g.default() : g;
+        };
+        const flash = () => {
+          if (adapter()?.driver) { adapter().driver.draw(); }
+        };
+
+        const refreshPill = () => {
+          const a = adapter();
+          if (!a) { pill.textContent = 'no adapter'; return; }
+          pill.textContent = a.usingPolyfill ? 'polyfill surface (dev shim)' : 'real WebMCP surface';
+          pill.className = 'pill ' + (a.usingPolyfill ? 'pill-shim' : 'pill-real');
+        };
+
+        document.getElementById('btn-create').onclick = async () => {
+          const a = adapter();
+          try {
+            const r = await a.surface.executeTool('create-design', { title: 'Extension demo', width: 1024, height: 768 });
+            log('create-design → ' + r);
+            flash();
+          } catch (e) { log('create-design ERROR: ' + e.message); }
+        };
+        document.getElementById('btn-add').onclick = async () => {
+          const a = adapter();
+          try {
+            const r = await a.surface.executeTool('add-text', { text: textInput.value || 'Hello from the extension', fontSize: 48 });
+            log('add-text → ' + r);
+            flash();
+          } catch (e) { log('add-text ERROR: ' + e.message); }
+        };
+        document.getElementById('btn-undo').onclick = async () => {
+          const a = adapter();
+          try {
+            const r = await a.surface.executeTool('undo', {});
+            log('undo → ' + r);
+            flash();
+          } catch (e) { log('undo ERROR: ' + e.message); }
+        };
+        document.getElementById('btn-approve').onclick = async () => {
+          const a = adapter();
+          try {
+            const r = await a.surface.executeTool('approve-batch', {});
+            log('approve-batch → ' + r);
+            flash();
+          } catch (e) { log('approve-batch ERROR: ' + e.message); }
+        };
+        document.getElementById('btn-tools').onclick = async () => {
+          const a = adapter();
+          try {
+            const tools = await a.surface.getTools();
+            log('getTools → ' + tools.length + ': ' + tools.map((t) => t.name).join(', '));
+          } catch (e) { log('getTools ERROR: ' + e.message); }
+        };
+
+        const ready = () => { refreshPill(); log('adapter installed — WebMCPAdapter ready'); };
+        if (window.WebMCPAdapter) ready();
+        else {
+          // The adapter booted on DOMContentLoaded; the script tag above runs
+          // after DOM, so in practice it is already present. Belt and braces:
+          const t = setInterval(() => { if (window.WebMCPAdapter) { clearInterval(t); ready(); } }, 200);
+        }
+      })();
+    </script>
+  </body>
+</html>
