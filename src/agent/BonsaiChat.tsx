@@ -28,6 +28,12 @@ import {
   toolSpecsFromDefinitions,
   type ParsedToolCall,
 } from './loop';
+import {
+  FLEET_DEFAULT_BASE,
+  loadProviderConfig,
+  saveProviderConfig,
+  type ImageProviderConfig,
+} from '../cloud/imageProviders';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -63,6 +69,16 @@ export function BonsaiChat() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** True while the latest output is streaming into an agent bubble (no final push). */
   const agentStreamingRef = useRef(false);
+  /** Image backend chosen in the provider panel (persisted to localStorage). */
+  const [provider, setProvider] = useState<ImageProviderConfig>(() => loadProviderConfig());
+
+  const updateProvider = (patch: Partial<ImageProviderConfig>) => {
+    setProvider((prev) => {
+      const next = { ...prev, ...patch };
+      saveProviderConfig(next);
+      return next;
+    });
+  };
 
   const tier = agent.tier;
   const tierLabel = tier ? TIER_LABELS[tier] : null;
@@ -195,6 +211,40 @@ export function BonsaiChat() {
           <span className="tier tier-unknown">detecting device…</span>
         )}
         {agent.slot && <span className="agent-slot">slot: {agent.slot}</span>}
+      </div>
+
+      {/* Image backend — provider panel (works on every tier, persisted) */}
+      <div className="agent-backend" role="group" aria-label="image backend">
+        <span className="agent-backendlabel">Image backend</span>
+        <select
+          className="agent-backendselect"
+          value={provider.id}
+          onChange={(e) => updateProvider({ id: e.target.value as ImageProviderConfig['id'] })}
+          aria-label="image backend provider"
+        >
+          <option value="on-device">On-device (WebGPU)</option>
+          <option value="fleet">Fleet — AitherBonsaiImage</option>
+          <option value="custom">Custom — Sana / ComfyUI / SD</option>
+        </select>
+        {provider.id !== 'on-device' && (
+          <input
+            className="agent-backendurl"
+            value={provider.baseUrl ?? (provider.id === 'fleet' ? FLEET_DEFAULT_BASE : '')}
+            placeholder={provider.id === 'fleet' ? FLEET_DEFAULT_BASE : 'http://host:port'}
+            onChange={(e) => updateProvider({ baseUrl: e.target.value })}
+            aria-label="image backend base URL"
+          />
+        )}
+        {provider.id === 'custom' && (
+          <input
+            className="agent-backendkey"
+            type="password"
+            value={provider.apiKey ?? ''}
+            placeholder="API key (optional)"
+            onChange={(e) => updateProvider({ apiKey: e.target.value })}
+            aria-label="image backend API key"
+          />
+        )}
       </div>
 
       {/* Tier C: honest dead-end, no broken panel */}

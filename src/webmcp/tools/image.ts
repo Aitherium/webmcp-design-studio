@@ -2,8 +2,9 @@
  * generate-image — the fallback chain:
  *   1. injected local runtime hook (WebGPU, provided by the agent layer in D3)
  *      → on-device, private, no server;
- *   2. else VITE_HOSTED_IMAGE_URL set → hosted service (POST /generate,
- *      poll /jobs/{jobId}, 120s timeout);
+ *   2. else the provider panel's backend (Settings row): `fleet` = the studio's
+ *      nginx proxy → AitherBonsaiImage /v1/generate (sync, one request);
+ *      `custom` = any user-named base URL (Sana/ComfyUI/SD) with optional key;
  *   3. else fail with a LOUD error naming which link is missing.
  * `device: 'auto' | 'local' | 'cloud'` forces a tier. The image is placed in
  * the current design as an element — UNCOMMITTED until approve-batch.
@@ -11,7 +12,11 @@
 import type { ToolDefinition } from '../types';
 import { ok, fail } from '../execute-io';
 import { getStudioStore } from '../../state/store';
-import { generateHostedImage } from '../../cloud/bonsaiImageClient';
+import {
+  FLEET_DEFAULT_BASE,
+  loadProviderConfig,
+  syncGenerateImage,
+} from '../../cloud/imageProviders';
 import { ToolError, argEnum, argNumber, argString, currentBatchSummary, snapshot } from './helpers';
 import { makeThumbnail } from './thumbnail';
 
@@ -48,16 +53,26 @@ export function getLocalImageGenerator(): LocalImageGenerator | null {
   return localImageGenerator;
 }
 
-function hostedUrl(): string | null {
-  const url = import.meta.env.VITE_HOSTED_IMAGE_URL;
-  return typeof url === 'string' && url.trim() !== '' ? url : null;
+/**
+ * Resolve the cloud base URL from the provider panel:
+ *   fleet  → the studio's own nginx proxy (same-origin, no CORS)
+ *   custom → the user-named base URL (required; a missing one is a loud error)
+ *   on-device → no backend — the error names the panel as the fix.
+ */
+function providerBase(config: { id: string; baseUrl?: string }): string | null {
+  if (config.id === 'fleet') return FLEET_DEFAULT_BASE;
+  if (config.id === 'custom') {
+    if (!config.baseUrl || config.baseUrl.trim() === '') return null;
+    return config.baseUrl;
+  }
+  return null;
 }
 
 export const generateImageTool: ToolDefinition = {
   name: 'generate-image',
   title: 'Generate image',
   description:
-    'Generate an image from a natural-language prompt — on-device (WebGPU, private, no server) when available, hosted service otherwise. The image is placed in the current design as an element (UNCOMMITTED until approve-batch). style: photographic, illustration, poster-art, neon. size: square, wide, tall. device: auto, local, cloud.',
+    'Generate an image from a natural-language prompt — on-device (WebGPU, private, no server) when available, or the backend chosen in the provider panel (fleet or custom, e.g. Sana/ComfyUI/SD) otherwise. The image is placed in the current design as an element (UNCOMMITTED until approve-batch). style: photographic, illustration, poster-art, neon. size: square, wide, tall. device: auto, local, cloud.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -105,14 +120,19 @@ export const generateImageTool: ToolDefinition = {
       };
 
       const runHosted = async (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> => {
-        const url = hostedUrl();
+        const config = loadProviderConfig();
+        const url = providerBase(config);
         if (!url) {
           throw new ToolError(
-            'no image backend is configured: the on-device WebGPU runtime is not loaded AND VITE_HOSTED_IMAGE_URL is not set. Enable one of the two to generate images.',
+            'no image backend is configured — pick one in the provider panel (Settings → Image backend): fleet (AitherBonsaiImage via the studio proxy) or custom (Sana/ComfyUI/SD URL). The on-device WebGPU runtime is not loaded in this session.',
           );
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
-        return generateHostedImage(url, { prompt, width: dims.width, height: dims.height, seed: actualSeed }, { signal });
+        return syncGenerateImage(
+          url,
+          { prompt, width: dims.width, height: dims.height, seed: actualSeed },
+          { apiKey: config.apiKey, signal },
+        );
       };
 
       // The chain: local → hosted → loud failure.
