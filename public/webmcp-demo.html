@@ -149,6 +149,16 @@
         const flash = () => {
           if (adapter()?.driver) { adapter().driver.draw(); }
         };
+        // The driver only paints into a canvas it has been ATTACHED to — a
+        // null canvas makes draw() a no-op and the page stays blank while
+        // get-canvas still renders (measured 2026-08-28 live: design state
+        // updated, page canvas 0 pixels, driver render 786432/786432).
+        // Attach once, as soon as both the adapter and the canvas exist.
+        (function attach() {
+          const a = adapter();
+          const c = document.getElementById('webmcp-canvas');
+          if (a?.driver && c && a.driver.canvas !== c) a.driver.attachCanvas(c);
+        })();
 
         const refreshPill = () => {
           const a = adapter();
