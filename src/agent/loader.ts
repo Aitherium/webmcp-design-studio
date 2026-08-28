@@ -561,6 +561,33 @@ export class AgentLoader {
       const worker = mod.createBonsaiChatWorker({ entryUrl: this.entryUrl });
       this.chatWorker = worker;
 
+      // The entry imports the runtime ASYNC and only then installs onmessage —
+      // a {type:'load'} posted before that is DROPPED (workers do not buffer),
+      // leaving the UI at "loading 0%" forever while the startup heartbeat has
+      // already disarmed the no-message timer. Measured 2026-08-28 live:
+      // status arrives at ~30ms, the load posted at t=0 is never processed.
+      // Wait for the heartbeat before posting load.
+      await new Promise<void>((resolve, reject) => {
+        const heartbeatTimer = setTimeout(
+          () => reject(new Error('the on-device worker never started (no heartbeat within 15s)')),
+          15_000,
+        );
+        let unsub: (() => void) | void;
+        unsub = worker.on((msg) => {
+          if (
+            msg.type === 'status' ||
+            msg.type === 'ready' ||
+            msg.type === 'progress' ||
+            msg.type === 'error'
+          ) {
+            clearTimeout(heartbeatTimer);
+            unsub?.();
+            if (msg.type === 'error') reject(new Error(msg.message));
+            else resolve();
+          }
+        });
+      });
+
       const ready = new Promise<void>((resolve, reject) => {
         let settled = false;
         let sawMessage = false;
