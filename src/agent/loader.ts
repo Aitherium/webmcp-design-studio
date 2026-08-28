@@ -43,9 +43,17 @@ export const WEBML_RUNTIME_URL =
 /** Image runtime bundle (dynamic import; exports createBonsaiImageRuntime). */
 export const WEBML_IMAGE_URL =
   import.meta.env.VITE_WEBML_IMAGE_URL ?? `${CDN}/webml-image.esm.js`;
-/** Same-origin module-worker entry that imports the CDN bundle and runs it. */
+/**
+ * Same-origin module-worker entry that imports the CDN bundle and runs it.
+ * The ?v=3 query is a CACHE-BUSTER for the entry file itself: GitHub Pages
+ * answers ETag 304s, so a returning visitor's browser can keep serving the
+ * OLD entry (pre-runtime-ready handshake, the 0% hang) after a deploy even
+ * though the bytes changed. Bump it whenever bonsai-worker-entry.js changes.
+ * (The runtime import inside the entry carries its own ?v=2 for the
+ * vendored copy of webml-text.esm.js.)
+ */
 export const BONSAI_WORKER_ENTRY_URL =
-  import.meta.env.VITE_BONSAI_WORKER_ENTRY_URL ?? '/workers/bonsai-worker-entry.js';
+  import.meta.env.VITE_BONSAI_WORKER_ENTRY_URL ?? '/workers/bonsai-worker-entry.js?v=3';
 /** MMDiT checkpoint + VAE weights on the Range+CORS mirror (verified assets). */
 export const IMAGE_WEIGHTS_URL = `${CDN}/bonsai-image-4b.q2_0.gguf`;
 export const VAE_WEIGHTS_URL = `${CDN}/vae.safetensors`;
