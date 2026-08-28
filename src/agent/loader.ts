@@ -32,6 +32,7 @@
  */
 import type { ModelContextSurface } from '../webmcp/types';
 import { setLocalImageGenerator, type LocalImageGenerator } from '../webmcp/tools/image';
+import { createHostedChatWorker } from './hostedChat';
 
 /* ── configuration ────────────────────────────────────────────────────────── */
 
@@ -354,6 +355,10 @@ export class AgentLoader {
   private sessionDisabled = new Set<ModelKind>();
   private mutex: Promise<void> = Promise.resolve();
   private listeners = new Set<(e: LoaderEvent) => void>();
+  /** Hosted lane (2026-08-28): force the tunnel-proxied llama.cpp brain for
+   *  any device — Tier C (no WebGPU) or `?hosted=1`. No model loads, no
+   *  consent; getChatWorker() returns the hosted worker. */
+  private hostedMode = false;
   /** Test hook: replaces the CDN dynamic import. */
   private runtimeModules: Partial<Record<ModelKind, WebMLRuntimeModule>> | null = null;
   /** Where the chat worker is created — set by the panel/store wiring. */
@@ -403,7 +408,14 @@ export class AgentLoader {
   }
 
   getChatWorker(): ChatWorkerLike | null {
+    if (this.hostedMode) return createHostedChatWorker();
     return this.chatWorker;
+  }
+
+  /** Enable/disable the hosted lane (call before the first generation). */
+  setHostedMode(on: boolean): void {
+    this.hostedMode = on;
+    this.emit({ type: 'tier', tier: on ? 'B' : this.verdict?.tier });
   }
 
   getImageRuntime(): ImageRuntimeLike | null {
@@ -503,7 +515,10 @@ export class AgentLoader {
   private async ensureModelLocked(kind: ModelKind, modelId: string | null): Promise<void> {
     if (this.sessionDisabled.has(kind)) {
       throw new LoaderError(
-        `on-device ${kind} is disabled for this session (a previous load failed) — the hosted tier is being used instead`,
+        `on-device ${kind} is disabled for this session (a previous load failed) — `
+          + (kind === 'image'
+            ? 'the hosted tier is being used instead'
+            : 'the design tools below still work'),
         kind,
         this.verdict?.tier ?? null,
       );
@@ -526,7 +541,8 @@ export class AgentLoader {
     const verdict = this.verdict ?? (await this.init());
     if (verdict.tier === 'C') {
       throw new LoaderError(
-        'on-device agent unavailable on this device (Tier C) — use ChatGPT/Chrome or the hosted tier',
+        'on-device agent unavailable on this device (Tier C) — the design tools below still work; '
+        + 'the agent brain itself needs a WebGPU browser',
         'text',
         verdict.tier,
       );

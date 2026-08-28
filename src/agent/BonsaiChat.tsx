@@ -66,9 +66,23 @@ export function BonsaiChat() {
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [busy, setBusy] = useState(false);
   const [chosenModel, setChosenModel] = useState<string | null>(null);
+  /** Hosted lane engaged (no consent needed — no model loads on this device). */
+  const [hostedActive, setHostedActive] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** True while the latest output is streaming into an agent bubble (no final push). */
   const agentStreamingRef = useRef(false);
+  /**
+   * The hosted lane (2026-08-28): the tunnel host proxies the fleet's
+   * llama.cpp brain at same-origin /api/chat/ — that only exists on
+   * studio-preview, so a GitHub-Pages origin (the judges' URL) cannot host it
+   * and keeps the honest Tier C dead-end. `?hosted=1` forces the lane
+   * anywhere (dev server, preview, a machine whose WebGPU load keeps failing).
+   */
+  const forceHosted = new URLSearchParams(window.location.search).has('hosted');
+  const hostedLaneAvailable =
+    forceHosted ||
+    (!window.location.hostname.endsWith('github.io') &&
+      window.location.hostname !== 'studio.aitherium.com');
   /** Image backend chosen in the provider panel (persisted to localStorage). */
   const [provider, setProvider] = useState<ImageProviderConfig>(() => loadProviderConfig());
 
@@ -104,8 +118,24 @@ export function BonsaiChat() {
       }
     });
     void agentLoader.init().then((v) => {
-      setAgent({ tier: v.tier, tierReasons: v.reasons, phase: v.tier === 'C' ? 'unavailable' : 'idle' });
+      // Tier C on a host that CAN proxy the fleet brain: switch to the hosted
+      // lane automatically — the loader reports tier B (text available) so the
+      // chat UI renders, and getChatWorker() returns the hosted worker.
+      const effective = v.tier === 'C' && hostedLaneAvailable ? 'B' : v.tier;
+      if (effective === 'B' && v.tier === 'C') {
+        agentLoader.setHostedMode(true);
+        setHostedActive(true);
+      }
+      setAgent({
+        tier: effective,
+        tierReasons: v.reasons,
+        phase: effective === 'C' ? 'unavailable' : 'idle',
+      });
     });
+    if (forceHosted) {
+      agentLoader.setHostedMode(true);
+      setHostedActive(true);
+    }
     setAgent({ consent: agentLoader.isConsentGiven() });
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -176,7 +206,9 @@ export function BonsaiChat() {
       });
       // The streamed bubble already shows the reply; only push a final bubble
       // when nothing streamed (non-streaming runtime, or a tool-only turn).
-      if (!agentStreamingRef.current) {
+      // An EMPTY result (a reasoning-only turn that burned its budget) must
+      // not push an empty bubble — the transcript keeps the tool rows.
+      if (!agentStreamingRef.current && result.text.trim()) {
         push({ role: 'agent', text: result.text });
       }
       if (result.exhausted) {
@@ -184,7 +216,7 @@ export function BonsaiChat() {
       }
     } catch (err) {
       setAgent({ lastError: err instanceof Error ? err.message : String(err), phase: 'error' });
-      push({ role: 'system', text: `The on-device agent hit an error: ${err instanceof Error ? err.message : String(err)}` });
+      push({ role: 'system', text: `The agent hit an error: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
       setBusy(false);
       agentStreamingRef.current = false;
@@ -260,8 +292,9 @@ export function BonsaiChat() {
         </div>
       ) : (
         <>
-          {/* Consent + model picker — the only thing that may load a model */}
-          {!agent.consent && !agent.slot && (
+          {/* Consent + model picker — the only thing that may load a model.
+              Hidden on the hosted lane: no model loads on this device. */}
+          {!agent.consent && !agent.slot && !hostedActive && (
             <div className="agent-consent" role="region" aria-label="on-device agent consent">
               <p className="consent-text">
                 Run the agent <strong>entirely on your device</strong> — no prompt leaves
@@ -302,8 +335,8 @@ export function BonsaiChat() {
             </div>
           )}
 
-          {/* Loaded state: ready to chat */}
-          {agent.consent && !loading && (
+          {/* Loaded state: ready to chat (hosted lane is always "ready") */}
+          {(agent.consent || hostedActive) && !loading && (
             <>
               <div className="agent-transcript" ref={scrollRef}>
                 {bubbles.length === 0 && (
@@ -338,9 +371,9 @@ export function BonsaiChat() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') void send();
                   }}
-                  placeholder={agent.phase === 'error' ? 'on-device agent failed — see status bar' : 'Ask the on-device agent…'}
+                  placeholder={agent.phase === 'error' ? 'agent failed — see status bar' : 'Ask the agent…'}
                   disabled={busy || agent.phase === 'error'}
-                  aria-label="message to the on-device agent"
+                  aria-label="message to the agent"
                 />
                 {busy ? (
                   <button className="chip chip-discard" onClick={interrupt}>
@@ -359,8 +392,8 @@ export function BonsaiChat() {
 
               {agent.phase === 'error' && (
                 <p className="agent-error" role="alert">
-                  {agent.lastError ?? 'The on-device agent failed.'} The hosted tier and
-                  ChatGPT's agent still work.
+                  {agent.lastError ?? 'The on-device agent failed.'} The design tools below
+                  still work, and image generation can use your own backend.
                 </p>
               )}
             </>
