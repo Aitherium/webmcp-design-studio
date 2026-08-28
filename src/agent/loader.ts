@@ -566,21 +566,20 @@ export class AgentLoader {
       // a {type:'load'} posted before that is DROPPED (workers do not buffer),
       // leaving the UI at "loading 0%" forever while the startup heartbeat has
       // already disarmed the no-message timer. Measured 2026-08-28 live:
-      // status arrives at ~30ms, the load posted at t=0 is never processed.
-      // Wait for the heartbeat before posting load.
+      // "worker-started" arrives at ~30ms — BEFORE the runtime import resolves —
+      // so a heartbeat that accepts ANY status still posts the load into the
+      // void. The entry now posts a SECOND status, phase "runtime-ready", AFTER
+      // runWebMLWorker has synchronously installed its listener; only that
+      // signal (or a real ready/progress/error) may unblock the load.
       await new Promise<void>((resolve, reject) => {
         const heartbeatTimer = setTimeout(
-          () => reject(new Error('the on-device worker never started (no heartbeat within 15s)')),
+          () => reject(new Error('the on-device worker never started (no runtime-ready heartbeat within 15s)')),
           15_000,
         );
         let unsub: (() => void) | void;
         unsub = worker.on((msg) => {
-          if (
-            msg.type === 'status' ||
-            msg.type === 'ready' ||
-            msg.type === 'progress' ||
-            msg.type === 'error'
-          ) {
+          const runtimeReady = msg.type === 'status' && msg.phase === 'runtime-ready';
+          if (runtimeReady || msg.type === 'ready' || msg.type === 'progress' || msg.type === 'error') {
             clearTimeout(heartbeatTimer);
             unsub?.();
             if (msg.type === 'error') reject(new Error(msg.message));
