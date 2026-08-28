@@ -141,6 +141,7 @@ export type WorkerResponse =
   | { type: 'token'; text: string; channel?: 'thinking' | 'answer' }
   | { type: 'done'; text: string; reasoning?: string; tokensPerSecond?: number }
   | { type: 'tool_action'; actions: Array<{ kind: 'open'; app: string }> }
+  | { type: 'status'; phase?: string }
   | { type: 'error'; message: string; fatal?: 'device-lost' };
 
 /** The minimal worker surface the loader holds. `on` may return an
