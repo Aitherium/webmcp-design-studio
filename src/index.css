@@ -101,8 +101,35 @@
   max-width: 100%;
   height: auto;
   border-radius: 4px;
-  box-shadow: 0 0 0 1px rgba(238, 238, 238, 0.06), 0 12px 40px rgba(0, 0, 0, 0.5);
+  /* The frame must read even for a WHITE poster on a light page — measured
+     live 2026-08-29: the agent created background:"white" and the owner said
+     "wait I dont see it" while the design was current and rendered. A
+     visible edge turns the blank poster into a poster. */
+  box-shadow: 0 0 0 1.5px rgba(128, 128, 128, 0.45), 0 12px 40px rgba(0, 0, 0, 0.5);
   background: var(--bg-base);
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  pointer-events: none;
+  color: var(--text-muted);
+}
+
+.canvas-empty-title {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.canvas-empty-sub {
+  font-size: 13px;
+  max-width: 380px;
 }
 
 .canvas-meta {

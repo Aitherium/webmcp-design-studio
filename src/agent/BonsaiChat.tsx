@@ -22,7 +22,6 @@ import {
   type ChatMessage,
 } from './loader';
 import {
-  applyFinalAnswer,
   createToolExecutor,
   renderToolsSystemBlock,
   runToolLoop,
@@ -193,33 +192,23 @@ export function BonsaiChat() {
         userMessage: text,
         executor,
         onToken: (tok) => {
+          // The streamed deltas are a PREVIEW and can carry partial-token
+          // artifacts — measured live 2026-08-29, the on-device 8B doubled
+          // every word ("TheThe design design for for your your…") while the
+          // worker's assembled final text was clean. They are NEVER painted
+          // into the transcript; the assembled result.text below is the only
+          // agent prose that shows. This ref only tracks that something
+          // streamed (distinguishes a tool-only turn from a prose turn).
           agentStreamingRef.current = true;
-          setBubbles((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === 'agent') {
-              const next = [...prev];
-              next[next.length - 1] = { ...last, text: last.text + tok };
-              return next;
-            }
-            return [...prev, { role: 'agent', text: tok }];
-          });
+          void tok;
         },
       });
-      // The streamed bubble already shows the reply — but the streamed deltas
-      // are a PREVIEW and can carry partial-token artifacts (measured live
-      // 2026-08-29: every word doubled — "TheThe design design…"). The loop's
-      // assembled result.text is the worker's trimmed final answer, so when
-      // something streamed we REPLACE the last agent bubble with it; when
-      // nothing streamed (non-streaming runtime, or a tool-only turn) we push
-      // it fresh. An EMPTY result (a reasoning-only turn that burned its
-      // budget) must not push an empty bubble — the transcript keeps the tool
-      // rows.
+      // The only agent prose the transcript ever shows is the loop's
+      // assembled result.text — the worker's trimmed final answer. An EMPTY
+      // result (a reasoning-only turn that burned its budget) must not push
+      // an empty bubble — the transcript keeps the tool rows.
       if (result.text.trim()) {
-        if (agentStreamingRef.current) {
-          setBubbles((prev) => applyFinalAnswer(prev, result.text));
-        } else {
-          push({ role: 'agent', text: result.text });
-        }
+        push({ role: 'agent', text: result.text });
       }
       if (result.exhausted) {
         push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });
