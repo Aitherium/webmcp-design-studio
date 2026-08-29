@@ -22,6 +22,7 @@ import {
   type ChatMessage,
 } from './loader';
 import {
+  applyFinalAnswer,
   createToolExecutor,
   renderToolsSystemBlock,
   runToolLoop,
@@ -204,12 +205,21 @@ export function BonsaiChat() {
           });
         },
       });
-      // The streamed bubble already shows the reply; only push a final bubble
-      // when nothing streamed (non-streaming runtime, or a tool-only turn).
-      // An EMPTY result (a reasoning-only turn that burned its budget) must
-      // not push an empty bubble — the transcript keeps the tool rows.
-      if (!agentStreamingRef.current && result.text.trim()) {
-        push({ role: 'agent', text: result.text });
+      // The streamed bubble already shows the reply — but the streamed deltas
+      // are a PREVIEW and can carry partial-token artifacts (measured live
+      // 2026-08-29: every word doubled — "TheThe design design…"). The loop's
+      // assembled result.text is the worker's trimmed final answer, so when
+      // something streamed we REPLACE the last agent bubble with it; when
+      // nothing streamed (non-streaming runtime, or a tool-only turn) we push
+      // it fresh. An EMPTY result (a reasoning-only turn that burned its
+      // budget) must not push an empty bubble — the transcript keeps the tool
+      // rows.
+      if (result.text.trim()) {
+        if (agentStreamingRef.current) {
+          setBubbles((prev) => applyFinalAnswer(prev, result.text));
+        } else {
+          push({ role: 'agent', text: result.text });
+        }
       }
       if (result.exhausted) {
         push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });

@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_TOOL_ROUNDS,
+  applyFinalAnswer,
   createToolExecutor,
   parseToolCalls,
   renderToolsSystemBlock,
@@ -279,5 +280,35 @@ describe('createToolExecutor', () => {
     await exec('list-Designs', {});
     await exec('get-Design-State', {});
     expect(executed.map(([n]) => n)).toEqual(['create-design', 'list-designs', 'get-design-state']);
+  });
+});
+
+/* ── final-answer merge: the stream is a preview, done.text is truth ──────── */
+
+describe('applyFinalAnswer — streamed deltas are a preview, the assembled text is truth', () => {
+  it('replaces the last agent bubble with the trimmed final answer', () => {
+    // Measured live 2026-08-29: the on-device 8B's STREAM doubled every word
+    // ("TheThe design design for for your your landing landing page page…")
+    // while the worker's assembled done.text was clean. The UI must paint the
+    // assembled text, not the streamed artifact.
+    const bubbles = [
+      { role: 'user', text: 'a landing page' },
+      { role: 'tool', text: 'create-Design({...})' },
+      { role: 'agent', text: 'TheThe design design for for your your landing landing page page has has been been created created.' },
+    ];
+    const merged = applyFinalAnswer(bubbles, 'The design for your landing page has been created.');
+    expect(merged).toHaveLength(3);
+    expect(merged[2].text).toBe('The design for your landing page has been created.');
+    expect(merged[1].role).toBe('tool'); // tool rows survive untouched
+  });
+
+  it('appends when nothing streamed', () => {
+    const merged = applyFinalAnswer([{ role: 'user', text: 'hi' }], 'The design is ready.');
+    expect(merged[1]).toEqual({ role: 'agent', text: 'The design is ready.' });
+  });
+
+  it('never replaces with an empty final text', () => {
+    const bubbles = [{ role: 'agent', text: 'streamed preview' }];
+    expect(applyFinalAnswer(bubbles, '   ')).toBe(bubbles);
   });
 });

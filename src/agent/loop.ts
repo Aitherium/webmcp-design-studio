@@ -220,6 +220,28 @@ export interface LoopResult {
 }
 
 /**
+ * Transcript merge for the FINAL answer. Streamed token deltas are a PREVIEW;
+ * the worker's assembled `done` text is the truth — it trims partial-token
+ * artifacts the stream cannot (measured live 2026-08-29, on-device 8B: the
+ * stream doubled every word into "TheThe design design for for your your…"
+ * while the assembled reply was clean, and the tool call in the same turn
+ * was perfectly formed). Returns the transcript with the last agent bubble
+ * replaced by the final text; appends when nothing streamed.
+ */
+export function applyFinalAnswer<T extends { role: string; text: string }>(bubbles: T[], finalText: string): T[] {
+  if (!finalText.trim()) return bubbles;
+  const next = [...bubbles];
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i].role === 'agent') {
+      next[i] = { ...next[i], text: finalText };
+      return next;
+    }
+  }
+  next.push({ role: 'agent' as const, text: finalText } as T);
+  return next;
+}
+
+/**
  * Run one user turn: generate → parse <tool_call>s → execute through the
  * executor → append role:'tool' → regenerate, up to MAX_TOOL_ROUNDS.
  */
