@@ -78,6 +78,18 @@ describe('parseToolCalls — lenient Hermes parsing', () => {
     expect(calls).toHaveLength(0);
     expect(rest).toContain('tool_call'); // the raw text remains
   });
+
+  it('recovers a NESTED wrapper (small model re-wraps its own call)', () => {
+    // Measured live 2026-08-29 on bonsai-8b: after a failed tool round the
+    // model emitted <tool_call><tool_call>{json}</tool_call></tool_call> —
+    // the outer regex stops at the FIRST close, so the body carries a stray
+    // opening tag that the strip repair removes.
+    const { calls } = parseToolCalls(
+      `<tool_call><tool_call>{"name": "list-designs", "arguments": {}}</tool_call></tool_call>`,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('list-designs');
+  });
 });
 
 describe('renderToolsSystemBlock', () => {
@@ -237,5 +249,35 @@ describe('createToolExecutor', () => {
     const out = await exec('add-text', { text: 'hi' });
     expect(out).toContain('not registered');
     expect(out).toContain('add-text');
+  });
+
+  it('resolves a CASE-MANGLED name to the real tool (measured 2026-08-29 live)', async () => {
+    // The on-device brain emitted create-Design / list-Designs /
+    // get-Design-State — every one a case error away from a real tool, and
+    // the strict match turned each into a "not registered" reply the model
+    // amplified into nesting + stutter until the round cap. The surface must
+    // receive the REAL registered name, not the mangled one.
+    const executed: Array<[string, unknown]> = [];
+    const surface = {
+      isPolyfill: false,
+      async getTools() {
+        return [
+          { name: 'create-design', description: 'x', inputSchema: {}, window: null, origin: null },
+          { name: 'list-designs', description: 'x', inputSchema: {}, window: null, origin: null },
+          { name: 'get-design-state', description: 'x', inputSchema: {}, window: null, origin: null },
+        ];
+      },
+      async executeTool(tool: { name: string }, input: unknown) {
+        executed.push([tool.name, input]);
+        return '"ok"';
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const exec = createToolExecutor({ surface: surface as never });
+    await exec('create-Design', { name: 'Cool Dogs Poster' });
+    await exec('list-Designs', {});
+    await exec('get-Design-State', {});
+    expect(executed.map(([n]) => n)).toEqual(['create-design', 'list-designs', 'get-design-state']);
   });
 });

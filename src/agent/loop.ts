@@ -81,9 +81,16 @@ export function parseToolCalls(text: string): { calls: ParsedToolCall[]; rest: s
 function tryParseCallBody(body: string): { name: string; arguments: Record<string, unknown> } | null {
   const candidates = [
     body,
+    // Nested-wrapper repair: a small model sometimes re-wraps its own call —
+    // <tool_call><tool_call>{json}</tool_call></tool_call>. The outer regex
+    // stops at the FIRST close, so the body carries a stray opening tag.
+    // Measured live 2026-08-29 on bonsai-8b: rounds 2-3 nested exactly this way.
+    body.replace(/<\/?tool_call>/g, '').trim(),
     // Small-model repairs: trailing commas, single→double quotes on keys.
     body.replace(/,\s*([}\]])/g, '$1'),
     body.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1'),
+    body.replace(/<\/?tool_call>/g, '').replace(/,\s*([}\]])/g, '$1').trim(),
+    body.replace(/<\/?tool_call>/g, '').replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1').trim(),
   ];
   for (const c of candidates) {
     try {
@@ -130,6 +137,13 @@ export function createToolExecutor(opts?: {
   onToolCall?: (name: string, args: Record<string, unknown>) => void;
 }): ToolExecutor {
   const surface = opts?.surface === undefined ? webmcpSurface() : opts.surface;
+  // Small-model tolerance: the on-device brain mangles case and spacing —
+  // measured live 2026-08-29 (bonsai-8b emitted create-Design / list-Designs /
+  // get-Design-State — every one a case error away from a real tool). A
+  // strict exact match turned each into a "not registered" response that the
+  // model amplified into nesting + stutter until the round cap. The registry
+  // is case-normalized, so the RESOLVED name is what the surface executes.
+  const norm = (s: string) => s.trim().toLowerCase();
   return async (name, args) => {
     opts?.onToolCall?.(name, args);
     if (surface) {
@@ -139,7 +153,7 @@ export function createToolExecutor(opts?: {
       } catch {
         tools = [];
       }
-      const registered = tools.find((t) => t.name === name);
+      const registered = tools.find((t) => norm(t.name) === norm(name));
       if (registered) {
         try {
           // The spec: executeTool resolves to a DOMString (stringified).
@@ -156,7 +170,7 @@ export function createToolExecutor(opts?: {
       return `tool '${name}' is not registered on the WebMCP surface right now — available: ${available}. Call get-design-state or list-designs to see the current state.`;
     }
     // Direct registry path (no WebMCP API at all).
-    const def = TOOL_DEFINITIONS.find((t) => t.name === name);
+    const def = TOOL_DEFINITIONS.find((t) => norm(t.name) === norm(name));
     if (!def) {
       return `unknown tool '${name}' — available: ${TOOL_DEFINITIONS.map((t) => t.name).join(', ')}`;
     }
