@@ -78,7 +78,9 @@ export default function App() {
       <footer className="app-footer">
         <p>
           Built with the Aitherium aw* stack — aither · awdk · awnode · awconnect · awnix · Claude Code on
-          DeepSeek V4 Flash. No OpenAI APIs were touched in the making of this infrastructure. For moral reasons.
+          DeepSeek V4 Flash. No OpenAI APIs were touched in the making of this infrastructure — the ethical
+          choice is the technical choice: open weights, local-first, and no proprietary black box between
+          the person and their tooling.
         </p>
       </footer>
     </div>
