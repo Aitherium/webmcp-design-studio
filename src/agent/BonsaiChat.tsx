@@ -51,7 +51,9 @@ Rules:
 - When you have finished a coherent set of edits, call approve-batch so they become real (the tool disappears once it commits — that is the toolchange demo).
 - generate-image: use device:"auto" unless the user asked for a specific backend.
 - Never invent element ids — read them from get-design-state.
-- Keep replies short and friendly.`;
+- Keep replies short and friendly.
+
+COMPLETE THE JOB — do not stop after the first step. When the user asks for a poster, flyer or social post (e.g. "a poster for a car washing company"), make the WHOLE design in one turn: create the design, add the headline + subtext + any info (hours, phone, location), generate an image, then approve-batch. Only ask the user a question when the request is genuinely ambiguous (no subject at all, or a choice only they can make). Do not reply "would you like me to add text?" — just do it, then summarize what you made and that it awaits their approval.`;
 
 const TIER_LABELS: Record<string, { text: string; cls: string }> = {
   A: { text: 'Tier A — full on-device (text + image)', cls: 'tier tier-a' },
