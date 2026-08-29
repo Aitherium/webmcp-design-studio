@@ -121,10 +121,21 @@ export const generateImageTool: ToolDefinition = {
 
       const runHosted = async (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> => {
         const config = loadProviderConfig();
-        const url = providerBase(config);
+        // D-2291: the panel defaults to 'on-device', but on a device with NO
+        // WebGPU (Tier C) that default must not be a dead end — the agent
+        // asked for 'auto', which means "local when available, hosted
+        // otherwise". A panel 'on-device' choice is only meaningful when a
+        // local generator exists; without one, fall through to the fleet lane
+        // (the studio's nginx proxy → AitherSana, live since D-2290) instead
+        // of erroring. An explicit 'custom' with no URL is still a loud error
+        // (the user named a backend and did not configure it).
+        let url = providerBase(config);
+        if (!url && config.id === 'on-device' && !localImageGenerator) {
+          url = providerBase({ id: 'fleet' });
+        }
         if (!url) {
           throw new ToolError(
-            'no image backend is configured — pick one in the provider panel (Settings → Image backend): fleet (AitherBonsaiImage via the studio proxy) or custom (Sana/ComfyUI/SD URL). The on-device WebGPU runtime is not loaded in this session.',
+            'no image backend is configured — pick one in the provider panel (Settings → Image backend): fleet (AitherSana via the studio proxy) or custom (Sana/ComfyUI/SD URL). The on-device WebGPU runtime is not loaded in this session.',
           );
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
