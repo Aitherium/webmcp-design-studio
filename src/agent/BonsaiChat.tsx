@@ -258,8 +258,11 @@ export function BonsaiChat() {
               .map((r, i) => ({ r, i }))
               .filter(({ r }) => /fail|error/i.test(r.slice(0, 200)));
             if (failures.length || !imageLanded) {
-              const details = failures.map(({ r, i }) => `${plan.calls[i]?.name ?? '?'}: ${r.slice(0, 160)}`).join(' | ');
-              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${responses[responses.length - 1]?.slice(0, 160) ?? 'no response'})` : '';
+              // 400 not 160: measured 08-30 the 160-char slice hid the hosted
+              // fallback's real error ("hosted fallback also failed: <cause>")
+              // — an error bubble that cannot name its cause is a dead end.
+              const details = failures.map(({ r, i }) => `${plan.calls[i]?.name ?? '?'}: ${r.slice(0, 400)}`).join(' | ');
+              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${responses[responses.length - 1]?.slice(0, 400) ?? 'no response'})` : '';
               push({
                 role: 'system',
                 text: `The scripted flow did not fully land. ${[details, imageNote].filter(Boolean).join(' ')} Tap Finish the job or approve what did land.`,
