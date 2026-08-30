@@ -140,10 +140,11 @@ export const generateImageTool: ToolDefinition = {
       const device = (argEnum(args, 'device', ['auto', 'local', 'cloud']) ?? 'auto') as 'auto' | 'local' | 'cloud';
 
       const dims = IMAGE_DIMENSIONS[size];
+      // BOTH lanes run at the runtime's native cap (≤1024px/axis): the
+      // on-device runtime rejects larger sizes, and the hosted Sana sprint is
+      // 1024-native (measured 08-30: tall 768×1280 through the tunnel 524'd
+      // past Cloudflare's 100s edge). The element box uses these ACTUAL dims.
       const localDims = fitOnDeviceDims(dims);
-      // The element box must match the ACTUAL generated image's aspect — the
-      // local lane runs at localDims (≤1024px), the hosted lane at dims.
-      let usedDims = dims;
       const local = localImageGenerator;
 
       const runLocal = async (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> => {
@@ -194,10 +195,16 @@ export const generateImageTool: ToolDefinition = {
           );
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
+        // The hosted lane gets the SAME cap-scaled dims — measured live
+        // 2026-08-30 (second verification): the plan's tall 768×1280 through
+        // the tunnel returned **524 after 125s** (Cloudflare's 100s edge; the
+        // Sana sprint model is 1024-native and the off-native size blew past
+        // the window). 1024² is the model's native size and stays well under
+        // the edge. The design stays tall; the canvas fit handles the aspect.
         const attempt = (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> =>
           syncGenerateImage(
             url,
-            { prompt, width: dims.width, height: dims.height, seed: actualSeed },
+            { prompt, width: localDims.width, height: localDims.height, seed: actualSeed },
             { apiKey: config.apiKey, signal },
           );
         try {
@@ -225,7 +232,6 @@ export const generateImageTool: ToolDefinition = {
       if (device === 'local') {
         result = await runLocal();
         usedDevice = 'local';
-        usedDims = localDims;
       } else if (device === 'cloud') {
         result = await runHosted();
         usedDevice = 'cloud';
@@ -233,8 +239,7 @@ export const generateImageTool: ToolDefinition = {
         try {
           result = await runLocal();
           usedDevice = 'local';
-          usedDims = localDims;
-        } catch (localErr) {
+          } catch (localErr) {
           // Fall through to the hosted tier with a note.
           try {
             result = await runHosted();
@@ -256,9 +261,9 @@ export const generateImageTool: ToolDefinition = {
       // ACTUAL generated dims (localDims for the local lane), so a clamped
       // on-device image is not stretched into the requested box.
       const canvas = doc.size;
-      const fit = Math.min((canvas.width * 0.8) / usedDims.width, (canvas.height * 0.8) / usedDims.height, 1);
-      const w = Math.round(usedDims.width * fit);
-      const h = Math.round(usedDims.height * fit);
+      const fit = Math.min((canvas.width * 0.8) / localDims.width, (canvas.height * 0.8) / localDims.height, 1);
+      const w = Math.round(localDims.width * fit);
+      const h = Math.round(localDims.height * fit);
       const store = getStudioStore().getState();
       const elementId = store.addElement({
         type: 'image',
