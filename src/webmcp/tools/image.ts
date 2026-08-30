@@ -100,7 +100,16 @@ export const generateImageTool: ToolDefinition = {
     },
     required: ['prompt'],
   },
-  available: (s) => Boolean(s.currentDocId) && s.docs.length > 0,
+  // Measured live 2026-08-30: gating REGISTRATION on currentDocId filtered
+  // generate-image OUT of the WebMCP surface on a fresh page — the "5 tools
+  // live" list had no generate-image, so the agent could never call it no
+  // matter how the flow proceeded (the D-2291 correction made a hosted
+  // backend unconditionally reachable, so the tool ALWAYS has a working lane
+  // once a design exists). The doc requirement is enforced at CALL time below
+  // ("no design exists — create one with create-design first"), which is
+  // where the agent can react to it; an absent tool is a dead end the agent
+  // cannot see.
+  available: () => true,
   async execute(args, { signal }) {
     const { doc } = snapshot();
     if (!doc) return fail('no design exists — create one with create-design first');

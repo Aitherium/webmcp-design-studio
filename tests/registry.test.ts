@@ -45,13 +45,23 @@ async function namesOf(h: Harness): Promise<string[]> {
   return (await h.surface.getTools()).map((t) => t.name).sort();
 }
 
-const ALWAYS_ON = ['create-design', 'list-designs', 'recall-preference', 'remember-preference', 'undo'];
+// generate-image is ALWAYS_ON since 2026-08-30: gating registration on
+// currentDocId filtered it out of the surface on a fresh page ("5 tools
+// live" with no image tool), so the agent could never call it — the doc
+// requirement is a call-time guard, not a registration gate.
+const ALWAYS_ON = [
+  'create-design',
+  'list-designs',
+  'recall-preference',
+  'remember-preference',
+  'undo',
+  'generate-image',
+];
 const DESIGN_ONLY = [
   'add-text',
   'duplicate-design',
   'edit-element',
   'export-design',
-  'generate-image',
   'get-design-state',
   'remove-element',
   'restyle-design',
