@@ -6,7 +6,15 @@
 // The startup heartbeat disarms the loader's no-message timeout: it measures
 // "did the worker start", not "did the load finish" (slow-but-alive must not
 // read as dead — measured 2026-08-27).
+// The SECOND heartbeat ("runtime-ready") is posted AFTER runWebMLWorker has
+// synchronously installed its message listener — the loader waits for THAT
+// before posting {type:'load'}, because a load sent while the runtime import
+// is still in flight is DROPPED (workers don't buffer; measured 2026-08-28:
+// status arrived at ~22ms, the load was never processed, 0% forever).
 self.postMessage({ type: "status", phase: "worker-started" });
 import('/webml-text.esm.js?v=2')
-  .then((m) => m.runWebMLWorker(self, { loadTransformers: null }))
+  .then((m) => {
+    m.runWebMLWorker(self, { loadTransformers: null });
+    self.postMessage({ type: "status", phase: "runtime-ready" });
+  })
   .catch((e) => self.postMessage({ type: "error", message: "runtime import failed: " + (e && e.message) }));

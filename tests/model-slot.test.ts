@@ -25,6 +25,12 @@ function makeStubRuntime(log: string[]) {
         },
         on(l) {
           listener = l as (msg: unknown) => void;
+          // The real worker entry posts phase:"runtime-ready" AFTER its message
+          // listener is installed, and the loader waits for THAT before posting
+          // the load (a load posted earlier is dropped — measured 2026-08-28).
+          // The stub must speak the same wire protocol or the handshake waits
+          // forever and the slot tests time out.
+          queueMicrotask(() => listener?.({ type: 'status', phase: 'runtime-ready' }));
           return () => {
             if (listener === l) listener = null;
           };

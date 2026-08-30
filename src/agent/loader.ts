@@ -43,9 +43,17 @@ export const WEBML_RUNTIME_URL =
 /** Image runtime bundle (dynamic import; exports createBonsaiImageRuntime). */
 export const WEBML_IMAGE_URL =
   import.meta.env.VITE_WEBML_IMAGE_URL ?? `${CDN}/webml-image.esm.js`;
-/** Same-origin module-worker entry that imports the CDN bundle and runs it. */
+/**
+ * Same-origin module-worker entry that imports the CDN bundle and runs it.
+ * The ?v=3 query is a CACHE-BUSTER for the entry file itself: GitHub Pages
+ * answers ETag 304s, so a returning visitor's browser can keep serving the
+ * OLD entry (pre-runtime-ready handshake, the 0% hang) after a deploy even
+ * though the bytes changed. Bump it whenever bonsai-worker-entry.js changes.
+ * (The runtime import inside the entry carries its own ?v=2 for the
+ * vendored copy of webml-text.esm.js.)
+ */
 export const BONSAI_WORKER_ENTRY_URL =
-  import.meta.env.VITE_BONSAI_WORKER_ENTRY_URL ?? '/workers/bonsai-worker-entry.js';
+  import.meta.env.VITE_BONSAI_WORKER_ENTRY_URL ?? '/workers/bonsai-worker-entry.js?v=3';
 /** MMDiT checkpoint + VAE weights on the Range+CORS mirror (verified assets). */
 export const IMAGE_WEIGHTS_URL = `${CDN}/bonsai-image-4b.q2_0.gguf`;
 export const VAE_WEIGHTS_URL = `${CDN}/vae.safetensors`;
@@ -566,21 +574,20 @@ export class AgentLoader {
       // a {type:'load'} posted before that is DROPPED (workers do not buffer),
       // leaving the UI at "loading 0%" forever while the startup heartbeat has
       // already disarmed the no-message timer. Measured 2026-08-28 live:
-      // status arrives at ~30ms, the load posted at t=0 is never processed.
-      // Wait for the heartbeat before posting load.
+      // "worker-started" arrives at ~30ms — BEFORE the runtime import resolves —
+      // so a heartbeat that accepts ANY status still posts the load into the
+      // void. The entry now posts a SECOND status, phase "runtime-ready", AFTER
+      // runWebMLWorker has synchronously installed its listener; only that
+      // signal (or a real ready/progress/error) may unblock the load.
       await new Promise<void>((resolve, reject) => {
         const heartbeatTimer = setTimeout(
-          () => reject(new Error('the on-device worker never started (no heartbeat within 15s)')),
+          () => reject(new Error('the on-device worker never started (no runtime-ready heartbeat within 15s)')),
           15_000,
         );
         let unsub: (() => void) | void;
         unsub = worker.on((msg) => {
-          if (
-            msg.type === 'status' ||
-            msg.type === 'ready' ||
-            msg.type === 'progress' ||
-            msg.type === 'error'
-          ) {
+          const runtimeReady = msg.type === 'status' && msg.phase === 'runtime-ready';
+          if (runtimeReady || msg.type === 'ready' || msg.type === 'progress' || msg.type === 'error') {
             clearTimeout(heartbeatTimer);
             unsub?.();
             if (msg.type === 'error') reject(new Error(msg.message));
