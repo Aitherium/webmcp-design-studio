@@ -1939,10 +1939,16 @@ async function createBonsaiImageRuntime(init) {
   let vaeTable = null;
   if (init.vaeWeightsUrl) {
     progress("weights", 20, "vae decoder");
-    const vaeIndex = await readSafetensorsIndex(init.vaeWeightsUrl, fetchRange);
+    // FIX (2026-08-30): httpRangeFetcher CLOSES OVER its url, so the shared
+    // `fetchRange` here was bound to the main GGUF weights — the VAE header
+    // and tensor reads pulled GGUF bytes and JSON.parse threw ("Unexpected
+    // token '�'" / "Unexpected end of JSON input", measured live on Tier
+    // A). The VAE needs its OWN fetcher.
+    const vaeFetcher = httpRangeFetcher(init.vaeWeightsUrl);
+    const vaeIndex = await readSafetensorsIndex(init.vaeWeightsUrl, vaeFetcher);
     const preloaded = /* @__PURE__ */ new Map();
     for (const [name, t] of vaeIndex) {
-      const raw = await fetchRange(t.start, t.start + t.length - 1);
+      const raw = await vaeFetcher(t.start, t.start + t.length - 1);
       if (t.dtype === "F32") {
         preloaded.set(
           name,
