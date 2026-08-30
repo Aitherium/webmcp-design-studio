@@ -13,7 +13,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useStudio } from '../state/store';
-import { effectiveDoc } from '../state/doc';
 import {
   agentLoader,
   BONSAI_MODELS,
@@ -37,14 +36,7 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
-import {
-  buildScriptedPlan,
-  deliverableFor,
-  planCallsForState,
-  responseClaimsImageAdd,
-  runScriptedPlan,
-  unwrapToolResponse,
-} from './scripted';
+import { unwrapToolResponse } from './scripted';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -224,105 +216,15 @@ export function BonsaiChat() {
             push({ role: 'tool', text: `${name}(${JSON.stringify(args).slice(0, 160)})` });
           },
         });
-        // The SCRIPTED first turn: a directive deliverable request never
-        // reaches the free-form model — measured live 2026-08-29, five
-        // consecutive failures (the on-device 8B stops after create-design
-        // and asks permission every time, 12-minute turns included). The
-        // scripted plan runs the SAME executor (WebMCP surface intact) and
-        // leaves the batch pending for the human's Approve.
-        if (attempt === 0 && opts?.enforce) {
-          const plan = buildScriptedPlan(userMessage);
-          if (plan) {
-            // Reuse an already-empty current design instead of creating a
-            // fourth copy (measured live 2026-08-29: the model created three
-            // "Car Wash Poster" designs in one night).
-            // 🚨 NEVER create a design while a batch is pending — measured
-            // live 2026-08-30 (owner ran the same request twice): the second
-            // run's create-design dropped the FIRST run's pending batch
-            // (store.ts createDesign: "any in-flight batch is dropped"),
-            // destroying the unapproved image+text work, and the empty-batch
-            // panel + the summary bubble then disagreed. Pending work is
-            // never destroyed; the plan appends to the existing design/batch
-            // instead. The old guard required `!s.pendingBatch` to slice, so
-            // a pending batch was EXACTLY when the destructive full plan ran.
-            const s = useStudio.getState();
-            const cur = s.docs.find((d) => d.id === s.currentDocId);
-            plan.calls = planCallsForState(plan, {
-              hasDoc: !!cur,
-              docBlank: (cur?.elements.length ?? 0) === 0,
-              batchPending: !!s.pendingBatch,
-            });
-            // User-facing, never meta: measured live 2026-08-30 this bubble
-            // leaked the implementation note ("scripted first turn (the agent
-            // could not chain tools reliably…") into the transcript the human
-            // reads — meta text, not a message. The scripted plan is the
-            // product now; say what it is doing.
-            push({ role: 'tool', text: 'Starting your design — I\'ll create it, add your headline and tagline, then generate the hero image.' });
-            // The scripted flow executes through the DIRECT registry path
-            // (surface: null), NOT the WebMCP surface: the surface's registry
-            // reconciles asynchronously behind an availability filter (add-text
-            // registers only once a design exists — measured live 08-30: a
-            // fresh page registered 5 tools, so every scripted step after
-            // create-design answered "not registered" and the batch stayed
-            // EMPTY while the bubble claimed success). The direct path runs
-            // the same TOOL_DEFINITIONS the surface wraps — no registration,
-            // no race, no availability gate.
-            const direct = createToolExecutor({ surface: null, onToolCall: () => undefined });
-            const responses = await runScriptedPlan(plan, direct, () => undefined);
-            // Ground truth for the summary: an image element must actually
-            // exist in the current design (committed or pending). The bubble
-            // never claims the image is on the canvas without checking —
-            // measured live 08-30, the old check passed on "not registered"
-            // responses and the bubble lied.
-            // 🚨 effectiveDoc, NOT d.elements: the scripted flow leaves the
-            // batch PENDING for the human's Approve, so the image lives in
-            // pendingBatch.ops and the raw committed doc has no image at all.
-            // The check used to read d.elements only — every successful
-            // scripted turn reported "image element not placed" while the
-            // element sat in the pending batch and rendered on the canvas
-            // (measured live 08-30: the Car Wash poster turn — generate-image
-            // returned the elementId, the batch panel showed the add op, and
-            // the bubble still claimed nothing landed).
-            const after = useStudio.getState();
-            const doc = after.docs.find((d) => d.id === after.currentDocId);
-            const eff = doc ? effectiveDoc(doc, after.pendingBatch) : null;
-            // TWO ground truths, both must agree before calling a success a
-            // failure. Measured live 2026-08-30: the store reconstruction
-            // (effectiveDoc over pendingBatch) said "no image" while the
-            // tool's OWN response carried batchSummary {opCount:1, ops:
-            // [{kind:"add", elementId}]} — the element WAS in the batch and
-            // the bubble falsely reported "image element not placed". The
-            // tool's batchSummary is the authoritative claim of what it did;
-            // the store view is the reconstruction. Trust the union.
-            const lastResp = responses[responses.length - 1] ?? '';
-            const { innerText } = unwrapToolResponse(lastResp);
-            const imageLanded =
-              (eff?.elements ?? []).some((e) => e.type === 'image') ||
-              responseClaimsImageAdd(lastResp);
-            const failures = responses
-              .map((r, i) => ({ r, i }))
-              .filter(({ r }) => /fail|error/i.test(r.slice(0, 200)));
-            if (failures.length || !imageLanded) {
-              // 400 not 160: measured 08-30 the 160-char slice hid the hosted
-              // fallback's real error ("hosted fallback also failed: <cause>")
-              // — an error bubble that cannot name its cause is a dead end.
-              // The response is wrapped in {content:[{type:"text",text}]} by
-              // the executor — unwrap it so the cause is readable.
-              const details = failures.map(({ r, i }) => `${plan.calls[i]?.name ?? '?'}: ${r.slice(0, 400)}`).join(' | ');
-              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${innerText.slice(0, 400) ?? 'no response'})` : '';
-              push({
-                role: 'system',
-                text: `The scripted flow did not fully land. ${[details, imageNote].filter(Boolean).join(' ')} Tap Finish the job or approve what did land.`,
-              });
-            } else {
-              push({
-                role: 'agent',
-                text: `Built your ${deliverableFor(userMessage) ?? 'design'} draft — headline, tagline and a hero image are on the canvas, waiting in the pending batch. Approve it, or tell me what to change (text, colors, layout — I'll edit).`,
-              });
-            }
-            break;
-          }
-        }
+        // NO scripted first turn — the owner killed it (2026-08-30: "I don't
+        // want it scripted"). Every message, including the first, runs the
+        // free-form agent loop: the loop now has the headroom the scripted
+        // plan was compensating for (6 rounds + 2048 tokens, measured to be
+        // what the on-device flow needs), the round-cap bubble names the last
+        // tool result, and the COMPLETE-THE-JOB guard below re-issues with a
+        // hard instruction when a directive turn ends with the design empty.
+        // The scripted plan code stays in ./scripted (tested) as a library —
+        // it is no longer invoked.
         const worker = agentLoader.getChatWorker();
         if (!worker) {
           // Lazy first-use load (consent already given or the chip was bypassed
@@ -336,17 +238,19 @@ export function BonsaiChat() {
           systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
           userMessage: message,
           executor,
-          // The completion re-issue needs headroom to emit the WHOLE
-          // multi-tool flow (state + text + image + approve) — measured live
-          // 2026-08-29, the 512-token default was eaten by thinking after
-          // get-design-state and the round came back EMPTY, a silent dead
-          // end. Same trap that hit the hosted 27B until its lane went 2048.
-          maxTokens: attempt === 1 ? 2048 : undefined,
-          // ...and more rounds: measured live 23:50 on 08-29, the re-issue
-          // chained get-design-state → create-Design → add-Text (real text
-          // on canvas!) and hit the 3-round cap before generate-image. The
-          // completion flow legitimately needs ~6; loop protection stays.
-          maxRounds: attempt === 1 ? 6 : undefined,
+          // Headroom on EVERY attempt, not just the re-issue — measured live
+          // 2026-08-30 ("still hasn't produced an image"): a fresh non-scripted
+          // turn chains list-designs → get-design-state → generate-image in
+          // its first three rounds, and the old 3-round cap cut the loop off
+          // right AFTER generate-image executed — its result reached no
+          // further generation, so a failed image looked like a silent no-op
+          // and a successful one was never announced. The 512-token default
+          // was eaten by thinking after get-design-state and the round came
+          // back EMPTY (measured 2026-08-29) — same trap that hit the hosted
+          // 27B until its lane went 2048. 6 rounds is still a hard cap; loop
+          // protection stays.
+          maxTokens: 2048,
+          maxRounds: 6,
           onToken: (tok) => {
             // The streamed deltas are a PREVIEW and can carry partial-token
             // artifacts — measured live 2026-08-29, the on-device 8B doubled
@@ -367,7 +271,15 @@ export function BonsaiChat() {
           push({ role: 'agent', text: result.text });
         }
         if (result.exhausted) {
-          push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });
+          // The cap must never read as a silent no-op — name the last tool
+          // outcome so a failed generate-image shows its cause instead of
+          // vanishing (measured live 2026-08-30: the cap fired right after
+          // generate-image and the transcript showed the call but never the
+          // result).
+          const lastOutcome = result.lastToolResponse
+            ? ` Last tool result: ${unwrapToolResponse(result.lastToolResponse).innerText.slice(0, 400)}`
+            : '';
+          push({ role: 'system', text: `Reached the tool-round cap — ask me to continue.${lastOutcome}` });
         }
         // The completion re-issue that ends EMPTY (no text, design still
         // unchanged, rounds not exhausted) is the silent-dead-end shape

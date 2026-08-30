@@ -273,6 +273,11 @@ export interface LoopResult {
   rounds: number;
   toolCalls: ParsedToolCall[];
   exhausted: boolean;
+  /** The response of the LAST executed tool call — the message the cap cut
+   * off before the model could see it. Surfaced on exhaustion so a
+   * generate-image that failed inside the final round is a named cause,
+   * never a silent no-op. */
+  lastToolResponse: string | null;
 }
 
 /**
@@ -309,12 +314,13 @@ export async function runToolLoop(opts: LoopOptions): Promise<LoopResult> {
   ];
   const allCalls: ParsedToolCall[] = [];
   let exhausted = false;
+  let lastToolResponse: string | null = null;
 
   for (let round = 0; round < maxRounds; round++) {
     const text = await generateOnce(opts, messages);
     const { calls, rest } = parseToolCalls(text);
     if (calls.length === 0) {
-      return { text, rounds: round + 1, toolCalls: allCalls, exhausted: false };
+      return { text, rounds: round + 1, toolCalls: allCalls, exhausted: false, lastToolResponse };
     }
 
     for (const call of calls) {
@@ -325,6 +331,7 @@ export async function runToolLoop(opts: LoopOptions): Promise<LoopResult> {
       // <tool_response>, closing the cycle.
       messages.push({ role: 'assistant', content: rest || text });
       const response = await opts.executor(call.name, call.arguments);
+      lastToolResponse = response;
       opts.onToolResult?.(call, response, round);
       messages.push({ role: 'tool', content: response });
     }
@@ -335,7 +342,7 @@ export async function runToolLoop(opts: LoopOptions): Promise<LoopResult> {
   const last = messages[messages.length - 1];
   const text = last?.role === 'assistant' ? last.content : '';
   opts.onMaxRounds?.(text);
-  return { text, rounds: maxRounds, toolCalls: allCalls, exhausted };
+  return { text, rounds: maxRounds, toolCalls: allCalls, exhausted, lastToolResponse };
 }
 
 function generateOnce(

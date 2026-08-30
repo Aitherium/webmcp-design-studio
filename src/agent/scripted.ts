@@ -175,6 +175,10 @@ export function unwrapToolResponse(resp: string): { innerText: string; inner: un
  * image" while the response carried the add op and the batch panel showed
  * it — so the summary check trusts the union: store view OR the response's
  * own claim. The claim also survives the response envelope (unwrap first).
+ *
+ * NOTE: the summary's ops carry NO element type — any kind:'add' (a TEXT
+ * add included) reads as a claim. The claim is therefore a WEAK signal:
+ * it must never carry the success bubble by itself (see scriptedImageLanded).
  */
 export function responseClaimsImageAdd(resp: string): boolean {
   const { inner } = unwrapToolResponse(resp);
@@ -182,4 +186,32 @@ export function responseClaimsImageAdd(resp: string): boolean {
     batchSummary?: { ops?: Array<{ kind?: string; elementId?: string }> };
   } | null;
   return !!b?.batchSummary?.ops?.some((o) => o.kind === 'add');
+}
+
+/**
+ * The scripted-turn success gate — the CURRENT store truth, arms ordered by
+ * strength:
+ *   1. the EFFECTIVE doc (committed + pending merged) holds an image element;
+ *   2. the PENDING BATCH itself holds an image add op — the batch's ops carry
+ *      the full element, so `element.type === 'image'` is the panel's own
+ *      view, and it covers the 08-30 case where the doc reconstruction
+ *      missed a genuinely-present op;
+ *   3. the response's batchSummary claim — ONLY when the batch currently
+ *      holds at least one add op.
+ * A response snapshot ALONE must never carry the bubble: it is a point-in-
+ * time claim, and once the batch is cleared it is stale (measured live
+ * 2026-08-30 — the bubble said "image on the canvas, waiting in the pending
+ * batch" while the batch panel showed nothing pending; the response claim
+ * had carried the success on its own).
+ */
+export function scriptedImageLanded(
+  eff: { elements: Array<{ type: string }> } | null,
+  pending: { ops: Array<{ kind: string; element?: { type: string } }> } | null,
+  lastResponse: string,
+): boolean {
+  if (eff?.elements.some((e) => e.type === 'image')) return true;
+  const batchImageAdd = pending?.ops.some((o) => o.kind === 'add' && o.element?.type === 'image') ?? false;
+  if (batchImageAdd) return true;
+  const batchHasAdd = pending?.ops.some((o) => o.kind === 'add') ?? false;
+  return batchHasAdd && responseClaimsImageAdd(lastResponse);
 }
