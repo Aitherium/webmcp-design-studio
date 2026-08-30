@@ -36,7 +36,7 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
-import { buildScriptedPlan, deliverableFor, runScriptedPlan, type ScriptedCall } from './scripted';
+import { buildScriptedPlan, deliverableFor, runScriptedPlan } from './scripted';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -235,12 +235,35 @@ export function BonsaiChat() {
               plan.calls = plan.calls.slice(1);
             }
             push({ role: 'tool', text: 'scripted first turn (the agent could not chain tools reliably — deterministic plan)' });
-            const responses = await runScriptedPlan(plan, executor, (call: ScriptedCall) => {
-              push({ role: 'tool', text: `${call.name}(${JSON.stringify(call.args).slice(0, 160)})` });
-            });
-            const failed = responses.filter((r) => /fail|error/i.test(r.slice(0, 120)));
-            if (failed.length) {
-              push({ role: 'system', text: `Some scripted steps failed (${failed.length}) — tap Finish the job or rephrase.` });
+            // The scripted flow executes through the DIRECT registry path
+            // (surface: null), NOT the WebMCP surface: the surface's registry
+            // reconciles asynchronously behind an availability filter (add-text
+            // registers only once a design exists — measured live 08-30: a
+            // fresh page registered 5 tools, so every scripted step after
+            // create-design answered "not registered" and the batch stayed
+            // EMPTY while the bubble claimed success). The direct path runs
+            // the same TOOL_DEFINITIONS the surface wraps — no registration,
+            // no race, no availability gate.
+            const direct = createToolExecutor({ surface: null, onToolCall: () => undefined });
+            const responses = await runScriptedPlan(plan, direct, () => undefined);
+            // Ground truth for the summary: an image element must actually
+            // exist in the current design (committed or pending). The bubble
+            // never claims the image is on the canvas without checking —
+            // measured live 08-30, the old check passed on "not registered"
+            // responses and the bubble lied.
+            const after = useStudio.getState();
+            const eff = after.docs.find((d) => d.id === after.currentDocId);
+            const imageLanded = (eff?.elements ?? []).some((e) => e.type === 'image');
+            const failures = responses
+              .map((r, i) => ({ r, i }))
+              .filter(({ r }) => /fail|error/i.test(r.slice(0, 200)));
+            if (failures.length || !imageLanded) {
+              const details = failures.map(({ r, i }) => `${plan.calls[i]?.name ?? '?'}: ${r.slice(0, 160)}`).join(' | ');
+              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${responses[responses.length - 1]?.slice(0, 160) ?? 'no response'})` : '';
+              push({
+                role: 'system',
+                text: `The scripted flow did not fully land. ${[details, imageNote].filter(Boolean).join(' ')} Tap Finish the job or approve what did land.`,
+              });
             } else {
               push({
                 role: 'agent',
