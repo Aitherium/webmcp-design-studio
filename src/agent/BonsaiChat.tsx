@@ -37,7 +37,13 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
-import { buildScriptedPlan, deliverableFor, runScriptedPlan } from './scripted';
+import {
+  buildScriptedPlan,
+  deliverableFor,
+  responseClaimsImageAdd,
+  runScriptedPlan,
+  unwrapToolResponse,
+} from './scripted';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -269,7 +275,19 @@ export function BonsaiChat() {
             const after = useStudio.getState();
             const doc = after.docs.find((d) => d.id === after.currentDocId);
             const eff = doc ? effectiveDoc(doc, after.pendingBatch) : null;
-            const imageLanded = (eff?.elements ?? []).some((e) => e.type === 'image');
+            // TWO ground truths, both must agree before calling a success a
+            // failure. Measured live 2026-08-30: the store reconstruction
+            // (effectiveDoc over pendingBatch) said "no image" while the
+            // tool's OWN response carried batchSummary {opCount:1, ops:
+            // [{kind:"add", elementId}]} — the element WAS in the batch and
+            // the bubble falsely reported "image element not placed". The
+            // tool's batchSummary is the authoritative claim of what it did;
+            // the store view is the reconstruction. Trust the union.
+            const lastResp = responses[responses.length - 1] ?? '';
+            const { innerText } = unwrapToolResponse(lastResp);
+            const imageLanded =
+              (eff?.elements ?? []).some((e) => e.type === 'image') ||
+              responseClaimsImageAdd(lastResp);
             const failures = responses
               .map((r, i) => ({ r, i }))
               .filter(({ r }) => /fail|error/i.test(r.slice(0, 200)));
@@ -277,8 +295,10 @@ export function BonsaiChat() {
               // 400 not 160: measured 08-30 the 160-char slice hid the hosted
               // fallback's real error ("hosted fallback also failed: <cause>")
               // — an error bubble that cannot name its cause is a dead end.
+              // The response is wrapped in {content:[{type:"text",text}]} by
+              // the executor — unwrap it so the cause is readable.
               const details = failures.map(({ r, i }) => `${plan.calls[i]?.name ?? '?'}: ${r.slice(0, 400)}`).join(' | ');
-              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${responses[responses.length - 1]?.slice(0, 400) ?? 'no response'})` : '';
+              const imageNote = !imageLanded ? `image element not placed (generate-image returned: ${innerText.slice(0, 400) ?? 'no response'})` : '';
               push({
                 role: 'system',
                 text: `The scripted flow did not fully land. ${[details, imageNote].filter(Boolean).join(' ')} Tap Finish the job or approve what did land.`,

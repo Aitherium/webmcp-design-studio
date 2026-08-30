@@ -111,3 +111,54 @@ export async function runScriptedPlan(
   }
   return responses;
 }
+
+/**
+ * Pull the inner JSON out of the executor's response envelope. The direct
+ * executor wraps every tool result as `{content:[{type:"text",text:"<json>"}]}`
+ * (the tool-loop convention) — a check that greps the raw response for
+ * "fail|error" or reads it verbatim into a bubble sees the envelope, not the
+ * tool's answer. Returns the unwrapped text (or the original when it is not
+ * an envelope), plus the parsed inner object when it parses.
+ */
+export function unwrapToolResponse(resp: string): { innerText: string; inner: unknown } {
+  try {
+    const outer: unknown = JSON.parse(resp);
+    if (typeof outer === 'object' && outer !== null) {
+      const content = (outer as { content?: unknown }).content;
+      if (Array.isArray(content)) {
+        const first = content[0] as { text?: string } | undefined;
+        if (typeof first?.text === 'string') {
+          const innerText = first.text;
+          try {
+            return { innerText, inner: JSON.parse(innerText) };
+          } catch {
+            return { innerText, inner: null };
+          }
+        }
+      }
+      // A bare JSON object response (no envelope) — the response itself is
+      // the answer; surface it as the inner payload too.
+      return { innerText: resp, inner: outer };
+    }
+  } catch {
+    // not JSON — the raw response is the text
+  }
+  return { innerText: resp, inner: null };
+}
+
+/**
+ * Does a generate-image response CLAIM an image add? The tool's own
+ * batchSummary is the authoritative record of what it did
+ * ({batchSummary:{ops:[{kind:"add",elementId}]}}). Measured live 2026-08-30:
+ * the store reconstruction (effectiveDoc over pendingBatch) reported "no
+ * image" while the response carried the add op and the batch panel showed
+ * it — so the summary check trusts the union: store view OR the response's
+ * own claim. The claim also survives the response envelope (unwrap first).
+ */
+export function responseClaimsImageAdd(resp: string): boolean {
+  const { inner } = unwrapToolResponse(resp);
+  const b = (inner ?? null) as {
+    batchSummary?: { ops?: Array<{ kind?: string; elementId?: string }> };
+  } | null;
+  return !!b?.batchSummary?.ops?.some((o) => o.kind === 'add');
+}
