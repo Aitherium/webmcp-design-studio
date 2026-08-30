@@ -71,6 +71,24 @@ export function isDirective(msg: string): boolean {
 }
 
 /**
+ * A completion re-issue that produced nothing is a SILENT DEAD END unless it
+ * is surfaced. Measured live 2026-08-29: after the re-issue the on-device 8B
+ * called get-design-state (the prompt's first step — good) and its next
+ * generation came back EMPTY (the 512-token default was eaten by thinking —
+ * the exact trap that hit the hosted 27B until max_tokens went to 2048), so
+ * no agent bubble was pushed and the canvas stayed blank with no error.
+ * "Stuck" = empty final text, design still unchanged, rounds not exhausted
+ * (an exhausted turn already pushes its own "round cap" bubble).
+ */
+export function isStuckCompletionTurn(
+  text: string,
+  designChanged: boolean,
+  exhausted: boolean,
+): boolean {
+  return !text.trim() && !designChanged && !exhausted;
+}
+
+/**
  * The <tools> declaration block — byte-compatible with the chat template the
  * worker's tokenizer renders inside the system turn.
  */

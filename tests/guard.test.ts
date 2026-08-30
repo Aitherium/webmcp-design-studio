@@ -9,7 +9,7 @@
  * empty. Every arm below was a real observed state that day.
  */
 import { describe, expect, it } from 'vitest';
-import { isDirective, shouldReissueForEmptyDesign } from '../src/agent/loop';
+import { isDirective, isStuckCompletionTurn, shouldReissueForEmptyDesign } from '../src/agent/loop';
 
 describe('shouldReissueForEmptyDesign — the COMPLETE-THE-JOB guard', () => {
   it('fires for a first-turn poster request that changed nothing', () => {
@@ -58,5 +58,23 @@ describe('shouldReissueForEmptyDesign — the COMPLETE-THE-JOB guard', () => {
     expect(isDirective('make a poster')).toBe(true);
     expect(isDirective('generate an image')).toBe(true);
     expect(isDirective('add a headline')).toBe(true);
+  });
+});
+
+describe('isStuckCompletionTurn — the silent-dead-end detector', () => {
+  it('flags the exact live shape: empty text after get-design-state, design unchanged, rounds not exhausted', () => {
+    expect(isStuckCompletionTurn('', false, false)).toBe(true);
+  });
+
+  it('does NOT flag a turn that produced text', () => {
+    expect(isStuckCompletionTurn('here is your poster…', false, false)).toBe(false);
+  });
+
+  it('does NOT flag a turn that changed the design', () => {
+    expect(isStuckCompletionTurn('', true, false)).toBe(false);
+  });
+
+  it('does NOT flag an exhausted turn (round-cap bubble already covers it)', () => {
+    expect(isStuckCompletionTurn('', false, true)).toBe(false);
   });
 });

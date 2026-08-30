@@ -23,6 +23,7 @@ import {
 } from './loader';
 import {
   createToolExecutor,
+  isStuckCompletionTurn,
   renderToolsSystemBlock,
   runToolLoop,
   shouldReissueForEmptyDesign,
@@ -227,6 +228,12 @@ export function BonsaiChat() {
           systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
           userMessage: message,
           executor,
+          // The completion re-issue needs headroom to emit the WHOLE
+          // multi-tool flow (state + text + image + approve) — measured live
+          // 2026-08-29, the 512-token default was eaten by thinking after
+          // get-design-state and the round came back EMPTY, a silent dead
+          // end. Same trap that hit the hosted 27B until its lane went 2048.
+          maxTokens: attempt === 1 ? 2048 : undefined,
           onToken: (tok) => {
             // The streamed deltas are a PREVIEW and can carry partial-token
             // artifacts — measured live 2026-08-29, the on-device 8B doubled
@@ -248,6 +255,17 @@ export function BonsaiChat() {
         }
         if (result.exhausted) {
           push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });
+        }
+        // The completion re-issue that ends EMPTY (no text, design still
+        // unchanged, rounds not exhausted) is the silent-dead-end shape
+        // measured live 2026-08-29 — surface it LOUD instead of leaving a
+        // blank canvas with no error. The Finish button is the guaranteed
+        // human path; naming it turns a dead end into a next step.
+        if (attempt === 1 && isStuckCompletionTurn(result.text, designChanged(), result.exhausted)) {
+          push({
+            role: 'system',
+            text: "The on-device model got stuck mid-flow. Tap 'Finish the job' to retry, or rephrase your request.",
+          });
         }
         // The guard: one re-issue, only for the FIRST attempt of a directive
         // message that produced no design change (no pending edits, no
