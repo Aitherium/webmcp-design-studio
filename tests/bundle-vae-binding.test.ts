@@ -34,4 +34,10 @@ describe('webml-image.esm.js — VAE fetcher binding', () => {
     expect(bundle).toContain('continue;');
     expect(bundle).toContain("'bn.num_batches_tracked'");
   });
+
+  it('converts BF16 tensors to F32 — BatchNorm running stats are BF16 in this VAE (bn.running_mean, live 08-30)', () => {
+    expect(bundle).toContain('t.dtype === "BF16"');
+    expect(bundle).toContain('bf16ToF32(dv.getUint16(i * 2, true))');
+    expect(bundle).toContain("'bn.running_mean'");
+  });
 });

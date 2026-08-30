@@ -1527,6 +1527,10 @@ function halfToF32(h) {
   if (exp === 31) return mant ? Number.NaN : sign * Infinity;
   return sign * (1 + mant / 1024) * 2 ** (exp - 15);
 }
+/** bfloat16 → float32: BF16 IS the top 16 bits of the F32 bit pattern. */
+function bf16ToF32(b) {
+  return new Float32Array(new Uint32Array([b << 16]).buffer)[0];
+}
 var encoderReady = false;
 var ENC_LAYERS = 36;
 var ENC_HIDDEN = 2560;
@@ -1958,6 +1962,15 @@ async function createBonsaiImageRuntime(init) {
         const out = new Float32Array(t.length / 2);
         const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
         for (let i = 0; i < out.length; i++) out[i] = halfToF32(dv.getUint16(i * 2, true));
+        preloaded.set(name, out);
+      } else if (t.dtype === "BF16") {
+        // BatchNorm running stats export as BF16 in this VAE (measured live
+        // 2026-08-30 on Tier A: "vae weights: 'bn.running_mean' has
+        // unsupported dtype BF16" — a REAL inference tensor, not a counter).
+        // BF16 is the top 16 bits of F32, so the conversion is a shift.
+        const out = new Float32Array(t.length / 2);
+        const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
+        for (let i = 0; i < out.length; i++) out[i] = bf16ToF32(dv.getUint16(i * 2, true));
         preloaded.set(name, out);
       } else if (t.dtype === "I64" || t.dtype === "I32") {
         // Training-only counters (PyTorch BatchNorm's bn.num_batches_tracked
