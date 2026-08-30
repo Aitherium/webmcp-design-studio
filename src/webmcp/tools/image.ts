@@ -68,6 +68,22 @@ function providerBase(config: { id: string; baseUrl?: string }): string | null {
   return null;
 }
 
+/**
+ * The hosted-tier base URL for a provider config, incl. the D-2291 fleet
+ * fallback (CORRECTED 2026-08-30 — see runHosted): a panel 'on-device' choice
+ * falls through to the fleet lane whenever the hosted tier is reached, since
+ * reaching it means local already failed or is absent. The original gate on
+ * `!localImageGenerator` never fired: the loader plugs the generator at
+ * construction on EVERY tier, so Tier B/C hit the loud "no image backend is
+ * configured" while the fleet lane sat unused (measured live 08-30).
+ */
+export function resolveHostedBase(config: { id: string; baseUrl?: string }): string | null {
+  const explicit = providerBase(config);
+  if (explicit) return explicit;
+  if (config.id === 'on-device') return FLEET_DEFAULT_BASE;
+  return null;
+}
+
 export const generateImageTool: ToolDefinition = {
   name: 'generate-image',
   title: 'Generate image',
@@ -121,18 +137,20 @@ export const generateImageTool: ToolDefinition = {
 
       const runHosted = async (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> => {
         const config = loadProviderConfig();
-        // D-2291: the panel defaults to 'on-device', but on a device with NO
-        // WebGPU (Tier C) that default must not be a dead end — the agent
-        // asked for 'auto', which means "local when available, hosted
-        // otherwise". A panel 'on-device' choice is only meaningful when a
-        // local generator exists; without one, fall through to the fleet lane
-        // (the studio's nginx proxy → AitherSana, live since D-2290) instead
-        // of erroring. An explicit 'custom' with no URL is still a loud error
+        // D-2291 + CORRECTION 2026-08-30: the panel defaults to 'on-device',
+        // but on a device where the local generator cannot RUN that default
+        // must not be a dead end — the agent asked for 'auto', which means
+        // "local when available, hosted otherwise". The ORIGINAL gate checked
+        // `!localImageGenerator` — measured live 08-30, the loader plugs the
+        // generator at CONSTRUCTION on every tier (it throws at use when the
+        // tier can't run), so that gate NEVER fired and Tier B/C got the loud
+        // "no image backend is configured" while the fleet lane sat unused.
+        // Reaching runHosted at all means local already failed or is absent —
+        // so a panel 'on-device' choice falls through to the fleet lane
+        // unconditionally here. An explicit 'custom' with no URL is still a
+        // loud error
         // (the user named a backend and did not configure it).
-        let url = providerBase(config);
-        if (!url && config.id === 'on-device' && !localImageGenerator) {
-          url = providerBase({ id: 'fleet' });
-        }
+        const url = resolveHostedBase(config);
         if (!url) {
           throw new ToolError(
             'no image backend is configured — pick one in the provider panel (Settings → Image backend): fleet (AitherSana via the studio proxy) or custom (Sana/ComfyUI/SD URL). The on-device WebGPU runtime is not loaded in this session.',
