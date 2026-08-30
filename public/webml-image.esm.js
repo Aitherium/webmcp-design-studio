@@ -1959,6 +1959,13 @@ async function createBonsaiImageRuntime(init) {
         const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
         for (let i = 0; i < out.length; i++) out[i] = halfToF32(dv.getUint16(i * 2, true));
         preloaded.set(name, out);
+      } else if (t.dtype === "I64" || t.dtype === "I32") {
+        // Training-only counters (PyTorch BatchNorm's bn.num_batches_tracked
+        // is I64) — never read at inference, and throwing here killed the
+        // WHOLE VAE load (measured live 2026-08-30 on Tier A: "vae weights:
+        // 'bn.num_batches_tracked' has unsupported dtype I64"). A tensor the
+        // op table actually NEEDS with a truly unknown dtype still throws.
+        continue;
       } else {
         throw new Error(`vae weights: '${name}' has unsupported dtype ${t.dtype}`);
       }

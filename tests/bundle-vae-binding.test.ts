@@ -28,4 +28,10 @@ describe('webml-image.esm.js — VAE fetcher binding', () => {
   it('never passes the main-weights fetcher into the VAE reader (the bug shape)', () => {
     expect(bundle).not.toContain('readSafetensorsIndex(init.vaeWeightsUrl, fetchRange)');
   });
+
+  it('skips training-only integer tensors instead of killing the VAE load (bn.num_batches_tracked I64, live 08-30)', () => {
+    expect(bundle).toContain('t.dtype === "I64" || t.dtype === "I32"');
+    expect(bundle).toContain('continue;');
+    expect(bundle).toContain("'bn.num_batches_tracked'");
+  });
 });
