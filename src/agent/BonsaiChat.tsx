@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useStudio } from '../state/store';
+import { effectiveDoc } from '../state/doc';
 import {
   agentLoader,
   BONSAI_MODELS,
@@ -234,7 +235,12 @@ export function BonsaiChat() {
             if (cur && cur.elements.length === 0 && !s.pendingBatch) {
               plan.calls = plan.calls.slice(1);
             }
-            push({ role: 'tool', text: 'scripted first turn (the agent could not chain tools reliably — deterministic plan)' });
+            // User-facing, never meta: measured live 2026-08-30 this bubble
+            // leaked the implementation note ("scripted first turn (the agent
+            // could not chain tools reliably…") into the transcript the human
+            // reads — meta text, not a message. The scripted plan is the
+            // product now; say what it is doing.
+            push({ role: 'tool', text: 'Starting your design — I\'ll create it, add your headline and tagline, then generate the hero image.' });
             // The scripted flow executes through the DIRECT registry path
             // (surface: null), NOT the WebMCP surface: the surface's registry
             // reconciles asynchronously behind an availability filter (add-text
@@ -251,8 +257,18 @@ export function BonsaiChat() {
             // never claims the image is on the canvas without checking —
             // measured live 08-30, the old check passed on "not registered"
             // responses and the bubble lied.
+            // 🚨 effectiveDoc, NOT d.elements: the scripted flow leaves the
+            // batch PENDING for the human's Approve, so the image lives in
+            // pendingBatch.ops and the raw committed doc has no image at all.
+            // The check used to read d.elements only — every successful
+            // scripted turn reported "image element not placed" while the
+            // element sat in the pending batch and rendered on the canvas
+            // (measured live 08-30: the Car Wash poster turn — generate-image
+            // returned the elementId, the batch panel showed the add op, and
+            // the bubble still claimed nothing landed).
             const after = useStudio.getState();
-            const eff = after.docs.find((d) => d.id === after.currentDocId);
+            const doc = after.docs.find((d) => d.id === after.currentDocId);
+            const eff = doc ? effectiveDoc(doc, after.pendingBatch) : null;
             const imageLanded = (eff?.elements ?? []).some((e) => e.type === 'image');
             const failures = responses
               .map((r, i) => ({ r, i }))
