@@ -40,6 +40,7 @@ import {
 import {
   buildScriptedPlan,
   deliverableFor,
+  planCallsForState,
   responseClaimsImageAdd,
   runScriptedPlan,
   unwrapToolResponse,
@@ -234,13 +235,23 @@ export function BonsaiChat() {
           if (plan) {
             // Reuse an already-empty current design instead of creating a
             // fourth copy (measured live 2026-08-29: the model created three
-            // "Car Wash Poster" designs in one night). Only when the current
-            // design is truly blank and no batch is pending.
+            // "Car Wash Poster" designs in one night).
+            // 🚨 NEVER create a design while a batch is pending — measured
+            // live 2026-08-30 (owner ran the same request twice): the second
+            // run's create-design dropped the FIRST run's pending batch
+            // (store.ts createDesign: "any in-flight batch is dropped"),
+            // destroying the unapproved image+text work, and the empty-batch
+            // panel + the summary bubble then disagreed. Pending work is
+            // never destroyed; the plan appends to the existing design/batch
+            // instead. The old guard required `!s.pendingBatch` to slice, so
+            // a pending batch was EXACTLY when the destructive full plan ran.
             const s = useStudio.getState();
             const cur = s.docs.find((d) => d.id === s.currentDocId);
-            if (cur && cur.elements.length === 0 && !s.pendingBatch) {
-              plan.calls = plan.calls.slice(1);
-            }
+            plan.calls = planCallsForState(plan, {
+              hasDoc: !!cur,
+              docBlank: (cur?.elements.length ?? 0) === 0,
+              batchPending: !!s.pendingBatch,
+            });
             // User-facing, never meta: measured live 2026-08-30 this bubble
             // leaked the implementation note ("scripted first turn (the agent
             // could not chain tools reliably…") into the transcript the human

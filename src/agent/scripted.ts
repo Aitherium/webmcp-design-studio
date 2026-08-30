@@ -26,6 +26,27 @@ export interface ScriptedPlan {
   calls: ScriptedCall[];
 }
 
+/**
+ * Decide which scripted calls actually run for the CURRENT store state.
+ *
+ * create-design is dropped when the current design is already blank (reuse it
+ * instead of making a fourth copy — measured 2026-08-29) OR when a batch is
+ * pending. The batch rule is the data-loss guard: measured live 2026-08-30,
+ * a second directive request ran the FULL plan while run 1's batch was still
+ * pending — createDesign() drops the in-flight batch ("a fresh design starts
+ * clean"), destroying the unapproved image+text work. Pending work is never
+ * destroyed; the plan appends to the existing design/batch instead.
+ */
+export function planCallsForState(
+  plan: ScriptedPlan,
+  state: { hasDoc: boolean; docBlank: boolean; batchPending: boolean },
+): ScriptedCall[] {
+  if ((state.hasDoc && state.docBlank) || state.batchPending) {
+    return plan.calls.slice(1);
+  }
+  return plan.calls;
+}
+
 const DELIVERABLE_SIZES: Array<[RegExp, string]> = [
   [/story|instagram/i, 'story'],
   [/flyer|leaflet/i, 'flyer'],
