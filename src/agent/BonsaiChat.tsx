@@ -25,6 +25,7 @@ import {
   createToolExecutor,
   renderToolsSystemBlock,
   runToolLoop,
+  shouldReissueForEmptyDesign,
   toolSpecsFromDefinitions,
   type ParsedToolCall,
 } from './loop';
@@ -54,6 +55,34 @@ Rules:
 - Keep replies short and friendly.
 
 COMPLETE THE JOB — do not stop after the first step. When the user asks for a poster, flyer or social post (e.g. "a poster for a car washing company"), make the WHOLE design in one turn: create the design, add the headline + subtext + any info (hours, phone, location), generate an image, then approve-batch. Only ask the user a question when the request is genuinely ambiguous (no subject at all, or a choice only they can make). Do not reply "would you like me to add text?" — just do it, then summarize what you made and that it awaits their approval.`;
+
+/**
+ * The COMPLETE-THE-JOB re-issue — the deterministic guard's message and the
+ * "Finish the job" button's payload. Prompt-level instruction is NOT enough:
+ * measured live 2026-08-29, bonsai-8b ignored the STUDIO_SYSTEM rule and
+ * replied with the verbatim-forbidden "would you like me to add text?" on
+ * three consecutive turns (including "actually create it"). The guard below
+ * re-issues this hard instruction when a directive turn ends with the design
+ * still empty.
+ */
+const FINISH_JOB_PROMPT = `The user asked you to make a design, and you responded without adding anything to the canvas. Finish the job NOW, in this turn:
+- If a design already exists, work on IT (call get-design-state first). Do NOT create a new design.
+- Add the headline, subtext and any other elements the request implies (hours, phone, location).
+- Generate an image for the design (device: "auto").
+- Call approve-batch when the design is complete.
+Do not ask the user for permission. Do not end with a question. Make the edits, then summarize what you made and that it awaits approval.`;
+
+/**
+ * Did the agent's turn change the design at all? Ground truth for the guard —
+ * pending batch ops OR committed elements on the current design. (create-design
+ * commits immediately, so the "empty design" state is elements.length === 0.)
+ */
+const designChanged = (): boolean => {
+  const s = useStudio.getState();
+  if (s.pendingBatch?.ops?.length) return true;
+  const doc = s.docs.find((d) => d.id === s.currentDocId);
+  return (doc?.elements.length ?? 0) > 0;
+};
 
 const TIER_LABELS: Record<string, { text: string; cls: string }> = {
   A: { text: 'Tier A — full on-device (text + image)', cls: 'tier tier-a' },
@@ -163,57 +192,73 @@ export function BonsaiChat() {
     }
   };
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    setInput('');
+  /**
+   * Run one user turn through the tool loop, then the COMPLETE-THE-JOB guard:
+   * a directive turn that ends with the design still empty is re-issued ONCE
+   * with the hard FINISH_JOB_PROMPT (the deterministic half of the fix —
+   * measured live 2026-08-29, the on-device 8B ignored the prompt rule three
+   * times in a row, so the guarantee must live outside the prompt).
+   */
+  const runTurn = async (userMessage: string, opts?: { enforce?: boolean }) => {
     setBusy(true);
     agentStreamingRef.current = false;
-    setBubbles((prev) => [...prev, { role: 'user', text }]);
     setAgent({ phase: 'generating', lastError: null });
 
     try {
-      const worker = agentLoader.getChatWorker();
-      if (!worker) {
-        // Lazy first-use load (consent already given or the chip was bypassed
-        // by device:'auto' tool calls — the loader enforces consent).
-        await agentLoader.ensureModel('text', { modelId: chosenModel ?? defaultModel });
-        setAgent({ modelId: chosenModel ?? defaultModel });
-      }
-      const w = agentLoader.getChatWorker()!;
-      const executor = createToolExecutor({
-        surface: webmcpSurface(),
-        onToolCall: (name, args) => {
-          agentStreamingRef.current = false;
-          push({ role: 'tool', text: `${name}(${JSON.stringify(args).slice(0, 160)})` });
-        },
-      });
-      const result = await runToolLoop({
-        worker: w,
-        systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
-        userMessage: text,
-        executor,
-        onToken: (tok) => {
-          // The streamed deltas are a PREVIEW and can carry partial-token
-          // artifacts — measured live 2026-08-29, the on-device 8B doubled
-          // every word ("TheThe design design for for your your…") while the
-          // worker's assembled final text was clean. They are NEVER painted
-          // into the transcript; the assembled result.text below is the only
-          // agent prose that shows. This ref only tracks that something
-          // streamed (distinguishes a tool-only turn from a prose turn).
-          agentStreamingRef.current = true;
-          void tok;
-        },
-      });
-      // The only agent prose the transcript ever shows is the loop's
-      // assembled result.text — the worker's trimmed final answer. An EMPTY
-      // result (a reasoning-only turn that burned its budget) must not push
-      // an empty bubble — the transcript keeps the tool rows.
-      if (result.text.trim()) {
-        push({ role: 'agent', text: result.text });
-      }
-      if (result.exhausted) {
-        push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });
+      let message = userMessage;
+      for (let attempt = 0; ; attempt++) {
+        const worker = agentLoader.getChatWorker();
+        if (!worker) {
+          // Lazy first-use load (consent already given or the chip was bypassed
+          // by device:'auto' tool calls — the loader enforces consent).
+          await agentLoader.ensureModel('text', { modelId: chosenModel ?? defaultModel });
+          setAgent({ modelId: chosenModel ?? defaultModel });
+        }
+        const w = agentLoader.getChatWorker()!;
+        const executor = createToolExecutor({
+          surface: webmcpSurface(),
+          onToolCall: (name, args) => {
+            agentStreamingRef.current = false;
+            push({ role: 'tool', text: `${name}(${JSON.stringify(args).slice(0, 160)})` });
+          },
+        });
+        const result = await runToolLoop({
+          worker: w,
+          systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
+          userMessage: message,
+          executor,
+          onToken: (tok) => {
+            // The streamed deltas are a PREVIEW and can carry partial-token
+            // artifacts — measured live 2026-08-29, the on-device 8B doubled
+            // every word ("TheThe design design for for your your…") while the
+            // worker's assembled final text was clean. They are NEVER painted
+            // into the transcript; the assembled result.text below is the only
+            // agent prose that shows. This ref only tracks that something
+            // streamed (distinguishes a tool-only turn from a prose turn).
+            agentStreamingRef.current = true;
+            void tok;
+          },
+        });
+        // The only agent prose the transcript ever shows is the loop's
+        // assembled result.text — the worker's trimmed final answer. An EMPTY
+        // result (a reasoning-only turn that burned its budget) must not push
+        // an empty bubble — the transcript keeps the tool rows.
+        if (result.text.trim()) {
+          push({ role: 'agent', text: result.text });
+        }
+        if (result.exhausted) {
+          push({ role: 'system', text: 'Reached the tool-round cap — ask me to continue.' });
+        }
+        // The guard: one re-issue, only for the FIRST attempt of a directive
+        // message that produced no design change (no pending edits, no
+        // elements on the current design). A question or an info ask never
+        // triggers it; a turn that already made edits never triggers it.
+        // Decision lives in loop.ts (pure) so the guard is unit-tested.
+        if (!(opts?.enforce && shouldReissueForEmptyDesign(userMessage, designChanged(), attempt))) {
+          break;
+        }
+        push({ role: 'system', text: 'The agent stopped without editing — completing the job for you.' });
+        message = FINISH_JOB_PROMPT;
       }
     } catch (err) {
       setAgent({ lastError: err instanceof Error ? err.message : String(err), phase: 'error' });
@@ -223,6 +268,14 @@ export function BonsaiChat() {
       agentStreamingRef.current = false;
       setAgent({ phase: agentLoader.getChatWorker() ? 'ready' : 'idle' });
     }
+  };
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput('');
+    setBubbles((prev) => [...prev, { role: 'user', text }]);
+    await runTurn(text, { enforce: true });
   };
 
   const interrupt = () => {
@@ -381,13 +434,23 @@ export function BonsaiChat() {
                     Stop
                   </button>
                 ) : (
-                  <button
-                    className="chip chip-approve"
-                    onClick={() => void send()}
-                    disabled={!input.trim() || agent.phase === 'error'}
-                  >
-                    Send
-                  </button>
+                  <>
+                    <button
+                      className="chip chip-discard"
+                      onClick={() => void runTurn(FINISH_JOB_PROMPT, { enforce: false })}
+                      disabled={agent.phase === 'error'}
+                      title="Force the agent to complete the current design now — no more questions"
+                    >
+                      Finish the job
+                    </button>
+                    <button
+                      className="chip chip-approve"
+                      onClick={() => void send()}
+                      disabled={!input.trim() || agent.phase === 'error'}
+                    >
+                      Send
+                    </button>
+                  </>
                 )}
               </div>
 

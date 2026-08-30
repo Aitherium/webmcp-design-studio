@@ -33,6 +33,44 @@ export interface ToolSpec {
 export const MAX_TOOL_ROUNDS = 3;
 
 /**
+ * The COMPLETE-THE-JOB guard's pure decision. Prompt-level instruction is not
+ * enough — measured live 2026-08-29, bonsai-8b ignored the STUDIO_SYSTEM rule
+ * and replied with the verbatim-forbidden "would you like me to add text?" on
+ * three consecutive turns. The loop therefore re-issues a hard completion
+ * instruction ONCE when a DIRECTIVE turn ends with the design still empty
+ * (no pending edits, no elements). Questions and info asks never fire it; an
+ * attempt that already made edits never fires it; the second attempt never
+ * re-fires (no infinite loop).
+ */
+export function shouldReissueForEmptyDesign(
+  userMessage: string,
+  designChanged: boolean,
+  attempt: number,
+): boolean {
+  return attempt === 0 && !designChanged && isDirective(userMessage);
+}
+
+/** Short affirmatives answer the agent's own permission question — the exact
+ * moment the guard exists for (the agent asked "want me to add text?", the
+ * person says "yes", and the model still must not get away with replying).
+ * Deliberately whole-string and explicitly NOT including "no". */
+const AFFIRMATIVES = new Set([
+  'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'sure', 'fine', 'go',
+  'go ahead', 'do it', 'proceed', 'create it', 'make it', 'yes please',
+  'please', 'go on', 'continue',
+]);
+
+/** Does the message ask the agent to DO something (vs ask a question)? */
+export function isDirective(msg: string): boolean {
+  if (/[?？]\s*$/.test(msg)) return false;
+  const norm = msg.trim().toLowerCase().replace(/[.!]+$/g, '');
+  if (AFFIRMATIVES.has(norm)) return true;
+  return /poster|flyer|story|design|make|create|add|generate|image|text|shape|headline|logo/i.test(
+    msg,
+  );
+}
+
+/**
  * The <tools> declaration block — byte-compatible with the chat template the
  * worker's tokenizer renders inside the system turn.
  */
