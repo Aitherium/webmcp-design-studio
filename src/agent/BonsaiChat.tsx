@@ -56,7 +56,15 @@ Rules:
 - Never invent element ids — read them from get-design-state.
 - Keep replies short and friendly.
 
-COMPLETE THE JOB — do not stop after the first step. When the user asks for a poster, flyer or social post (e.g. "a poster for a car washing company"), make the WHOLE design in one turn: create the design, add the headline + subtext + any info (hours, phone, location), generate an image, then approve-batch. Only ask the user a question when the request is genuinely ambiguous (no subject at all, or a choice only they can make). Do not reply "would you like me to add text?" — just do it, then summarize what you made and that it awaits their approval.`;
+COMPLETE THE JOB — do not stop after the first step. When the user asks for a poster, flyer or social post (e.g. "a poster for a car washing company"), make the WHOLE design in one turn: create the design, add the headline + subtext + any info (hours, phone, location), generate an image, then approve-batch. Only ask the user a question when the request is genuinely ambiguous (no subject at all, or a choice only they can make). Do not reply "would you like me to add text?" — just do it, then summarize what you made and that it awaits their approval.
+
+WORKED EXAMPLE — imitate this exact sequence; never pause between steps to ask permission (a 0.6-8B model that stops to ask has not finished). For "make a poster for a bakery":
+1. create-design({name: "Bakery Poster", size: "poster", palette: "neon"})
+2. add-text({text: "Bakery", fontSize: 96, bold: true, align: "center"})
+3. add-text({text: "Fresh bread daily", fontSize: 40, align: "center"})
+4. generate-image({prompt: "hero shot of fresh bread, warm light", style: "photographic", size: "tall", device: "auto"})
+5. approve-batch()
+Then reply with ONE short summary sentence: what you made and that it awaits the person's approval.`;
 
 /**
  * The COMPLETE-THE-JOB re-issue — the deterministic guard's message and the
