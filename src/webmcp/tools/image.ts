@@ -31,6 +31,24 @@ export const IMAGE_DIMENSIONS: Record<ImageSize, { width: number; height: number
   tall: { width: 768, height: 1280 },
 };
 
+/** The on-device runtime's per-axis cap (webml-image.esm.js: "sizes above
+ * 1024px are not supported on-device" — measured live 2026-08-30, the
+ * plan's 'tall' 768×1280 was rejected and the whole turn fell to hosted). */
+export const ON_DEVICE_MAX_DIM = 1024;
+
+/**
+ * Scale dims to fit the on-device runtime's cap, preserving aspect. A
+ * 768×1280 'tall' request becomes 614×1024; a 1024×1024 'square' passes
+ * through unchanged. Never upscales (scale = min(1, …)).
+ */
+export function fitOnDeviceDims(dims: { width: number; height: number }): { width: number; height: number } {
+  const scale = Math.min(1, ON_DEVICE_MAX_DIM / Math.max(dims.width, dims.height));
+  return {
+    width: Math.max(64, Math.round(dims.width * scale)),
+    height: Math.max(64, Math.round(dims.height * scale)),
+  };
+}
+
 export interface LocalImageGenerator {
   generate(req: {
     prompt: string;
@@ -122,6 +140,10 @@ export const generateImageTool: ToolDefinition = {
       const device = (argEnum(args, 'device', ['auto', 'local', 'cloud']) ?? 'auto') as 'auto' | 'local' | 'cloud';
 
       const dims = IMAGE_DIMENSIONS[size];
+      const localDims = fitOnDeviceDims(dims);
+      // The element box must match the ACTUAL generated image's aspect — the
+      // local lane runs at localDims (≤1024px), the hosted lane at dims.
+      let usedDims = dims;
       const local = localImageGenerator;
 
       const runLocal = async (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> => {
@@ -134,8 +156,14 @@ export const generateImageTool: ToolDefinition = {
         try {
           return await local.generate({
             prompt,
-            width: dims.width,
-            height: dims.height,
+            // The on-device runtime caps at 1024px per axis (webml-image.esm.js:
+            // "sizes above 1024px are not supported on-device" — measured live
+            // 2026-08-30: the scripted plan's 'tall' 768×1280 was rejected and
+            // the whole turn fell to hosted). fitOnDeviceDims scales to fit,
+            // preserving the aspect; the element placement below uses the
+            // ACTUAL generated dims so the canvas box is not stretched.
+            width: localDims.width,
+            height: localDims.height,
             seed: actualSeed,
             style,
           });
@@ -166,11 +194,29 @@ export const generateImageTool: ToolDefinition = {
           );
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
-        return syncGenerateImage(
-          url,
-          { prompt, width: dims.width, height: dims.height, seed: actualSeed },
-          { apiKey: config.apiKey, signal },
-        );
+        const attempt = (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> =>
+          syncGenerateImage(
+            url,
+            { prompt, width: dims.width, height: dims.height, seed: actualSeed },
+            { apiKey: config.apiKey, signal },
+          );
+        try {
+          return await attempt();
+        } catch (err) {
+          // One retry on a NETWORK-type failure, never on an HTTP error
+          // response (syncGenerateImage throws "…: HTTP <status>" for
+          // non-ok responses; network failures carry the fetch error instead).
+          // Measured live 2026-08-30: the aither-create AutoUpdate swap
+          // (13:20) left a seconds-long tunnel re-establishment window and
+          // the owner's fallback died with "Failed to fetch" — a transient
+          // that one retry absorbs.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/HTTP \d{3}/.test(msg) && /failed at POST|failed fetching|response was not JSON/i.test(msg)) {
+            await new Promise((r) => setTimeout(r, 1500));
+            return await attempt();
+          }
+          throw err;
+        }
       };
 
       // The chain: local → hosted → loud failure.
@@ -179,6 +225,7 @@ export const generateImageTool: ToolDefinition = {
       if (device === 'local') {
         result = await runLocal();
         usedDevice = 'local';
+        usedDims = localDims;
       } else if (device === 'cloud') {
         result = await runHosted();
         usedDevice = 'cloud';
@@ -186,6 +233,7 @@ export const generateImageTool: ToolDefinition = {
         try {
           result = await runLocal();
           usedDevice = 'local';
+          usedDims = localDims;
         } catch (localErr) {
           // Fall through to the hosted tier with a note.
           try {
@@ -204,11 +252,13 @@ export const generateImageTool: ToolDefinition = {
         usedDevice = 'cloud';
       }
 
-      // Place the image element centered, fitted to the canvas.
+      // Place the image element centered, fitted to the canvas — using the
+      // ACTUAL generated dims (localDims for the local lane), so a clamped
+      // on-device image is not stretched into the requested box.
       const canvas = doc.size;
-      const fit = Math.min((canvas.width * 0.8) / dims.width, (canvas.height * 0.8) / dims.height, 1);
-      const w = Math.round(dims.width * fit);
-      const h = Math.round(dims.height * fit);
+      const fit = Math.min((canvas.width * 0.8) / usedDims.width, (canvas.height * 0.8) / usedDims.height, 1);
+      const w = Math.round(usedDims.width * fit);
+      const h = Math.round(usedDims.height * fit);
       const store = getStudioStore().getState();
       const elementId = store.addElement({
         type: 'image',
