@@ -36,6 +36,7 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
+import { buildScriptedPlan, deliverableFor, runScriptedPlan, type ScriptedCall } from './scripted';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -208,6 +209,47 @@ export function BonsaiChat() {
     try {
       let message = userMessage;
       for (let attempt = 0; ; attempt++) {
+        const executor = createToolExecutor({
+          surface: webmcpSurface(),
+          onToolCall: (name, args) => {
+            agentStreamingRef.current = false;
+            push({ role: 'tool', text: `${name}(${JSON.stringify(args).slice(0, 160)})` });
+          },
+        });
+        // The SCRIPTED first turn: a directive deliverable request never
+        // reaches the free-form model — measured live 2026-08-29, five
+        // consecutive failures (the on-device 8B stops after create-design
+        // and asks permission every time, 12-minute turns included). The
+        // scripted plan runs the SAME executor (WebMCP surface intact) and
+        // leaves the batch pending for the human's Approve.
+        if (attempt === 0 && opts?.enforce) {
+          const plan = buildScriptedPlan(userMessage);
+          if (plan) {
+            // Reuse an already-empty current design instead of creating a
+            // fourth copy (measured live 2026-08-29: the model created three
+            // "Car Wash Poster" designs in one night). Only when the current
+            // design is truly blank and no batch is pending.
+            const s = useStudio.getState();
+            const cur = s.docs.find((d) => d.id === s.currentDocId);
+            if (cur && cur.elements.length === 0 && !s.pendingBatch) {
+              plan.calls = plan.calls.slice(1);
+            }
+            push({ role: 'tool', text: 'scripted first turn (the agent could not chain tools reliably — deterministic plan)' });
+            const responses = await runScriptedPlan(plan, executor, (call: ScriptedCall) => {
+              push({ role: 'tool', text: `${call.name}(${JSON.stringify(call.args).slice(0, 160)})` });
+            });
+            const failed = responses.filter((r) => /fail|error/i.test(r.slice(0, 120)));
+            if (failed.length) {
+              push({ role: 'system', text: `Some scripted steps failed (${failed.length}) — tap Finish the job or rephrase.` });
+            } else {
+              push({
+                role: 'agent',
+                text: `Built your ${deliverableFor(userMessage) ?? 'design'} draft — headline, tagline and a hero image are on the canvas, waiting in the pending batch. Approve it, or tell me what to change (text, colors, layout — I'll edit).`,
+              });
+            }
+            break;
+          }
+        }
         const worker = agentLoader.getChatWorker();
         if (!worker) {
           // Lazy first-use load (consent already given or the chip was bypassed
@@ -216,13 +258,6 @@ export function BonsaiChat() {
           setAgent({ modelId: chosenModel ?? defaultModel });
         }
         const w = agentLoader.getChatWorker()!;
-        const executor = createToolExecutor({
-          surface: webmcpSurface(),
-          onToolCall: (name, args) => {
-            agentStreamingRef.current = false;
-            push({ role: 'tool', text: `${name}(${JSON.stringify(args).slice(0, 160)})` });
-          },
-        });
         const result = await runToolLoop({
           worker: w,
           systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
@@ -234,6 +269,11 @@ export function BonsaiChat() {
           // get-design-state and the round came back EMPTY, a silent dead
           // end. Same trap that hit the hosted 27B until its lane went 2048.
           maxTokens: attempt === 1 ? 2048 : undefined,
+          // ...and more rounds: measured live 23:50 on 08-29, the re-issue
+          // chained get-design-state → create-Design → add-Text (real text
+          // on canvas!) and hit the 3-round cap before generate-image. The
+          // completion flow legitimately needs ~6; loop protection stays.
+          maxRounds: attempt === 1 ? 6 : undefined,
           onToken: (tok) => {
             // The streamed deltas are a PREVIEW and can carry partial-token
             // artifacts — measured live 2026-08-29, the on-device 8B doubled
