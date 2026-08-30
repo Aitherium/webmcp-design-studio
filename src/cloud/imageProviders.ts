@@ -28,8 +28,21 @@ export interface ImageProviderConfig {
 
 export const STORAGE_KEY = 'webmcp.imageProvider';
 
-/** The studio's own nginx proxy → AitherBonsaiImage :8798 `/v1/*` (same-origin, so no CORS). */
-export const FLEET_DEFAULT_BASE = '/api/image/';
+/**
+ * The studio's hosted image lane. On the PUBLIC hosts (studio.aitherium.com —
+ * GitHub Pages, which rejects POSTs — and studio-preview, a static nginx)
+ * the lane is CROSS-ORIGIN to studio-api.aitherium.com (the tunnel route →
+ * aither-create → media-forge canvas_compat → Sana, sync images, CORS
+ * allowlisted in AitherCreate/src/middleware.ts; measured live 2026-08-30:
+ * /api/generate answered 200 with an image after the D-192 dead-name fix).
+ * Localhost dev keeps the same-origin nginx proxy → AitherSana.
+ */
+export const FLEET_DEFAULT_BASE =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'studio.aitherium.com' ||
+    window.location.hostname === 'studio-preview.aitherium.com')
+    ? 'https://studio-api.aitherium.com/api'
+    : '/api/image/';
 
 export const DEFAULT_CONFIG: ImageProviderConfig = { id: 'on-device' };
 
