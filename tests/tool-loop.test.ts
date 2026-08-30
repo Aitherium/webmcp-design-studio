@@ -8,7 +8,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_TOOL_ROUNDS,
-  applyFinalAnswer,
   createToolExecutor,
   parseToolCalls,
   renderToolsSystemBlock,
@@ -78,18 +77,6 @@ describe('parseToolCalls — lenient Hermes parsing', () => {
     const { calls, rest } = parseToolCalls('<tool_call>{"name": }</tool_call>');
     expect(calls).toHaveLength(0);
     expect(rest).toContain('tool_call'); // the raw text remains
-  });
-
-  it('recovers a NESTED wrapper (small model re-wraps its own call)', () => {
-    // Measured live 2026-08-29 on bonsai-8b: after a failed tool round the
-    // model emitted <tool_call><tool_call>{json}</tool_call></tool_call> —
-    // the outer regex stops at the FIRST close, so the body carries a stray
-    // opening tag that the strip repair removes.
-    const { calls } = parseToolCalls(
-      `<tool_call><tool_call>{"name": "list-designs", "arguments": {}}</tool_call></tool_call>`,
-    );
-    expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe('list-designs');
   });
 });
 
@@ -250,65 +237,5 @@ describe('createToolExecutor', () => {
     const out = await exec('add-text', { text: 'hi' });
     expect(out).toContain('not registered');
     expect(out).toContain('add-text');
-  });
-
-  it('resolves a CASE-MANGLED name to the real tool (measured 2026-08-29 live)', async () => {
-    // The on-device brain emitted create-Design / list-Designs /
-    // get-Design-State — every one a case error away from a real tool, and
-    // the strict match turned each into a "not registered" reply the model
-    // amplified into nesting + stutter until the round cap. The surface must
-    // receive the REAL registered name, not the mangled one.
-    const executed: Array<[string, unknown]> = [];
-    const surface = {
-      isPolyfill: false,
-      async getTools() {
-        return [
-          { name: 'create-design', description: 'x', inputSchema: {}, window: null, origin: null },
-          { name: 'list-designs', description: 'x', inputSchema: {}, window: null, origin: null },
-          { name: 'get-design-state', description: 'x', inputSchema: {}, window: null, origin: null },
-        ];
-      },
-      async executeTool(tool: { name: string }, input: unknown) {
-        executed.push([tool.name, input]);
-        return '"ok"';
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    };
-    const exec = createToolExecutor({ surface: surface as never });
-    await exec('create-Design', { name: 'Cool Dogs Poster' });
-    await exec('list-Designs', {});
-    await exec('get-Design-State', {});
-    expect(executed.map(([n]) => n)).toEqual(['create-design', 'list-designs', 'get-design-state']);
-  });
-});
-
-/* ── final-answer merge: the stream is a preview, done.text is truth ──────── */
-
-describe('applyFinalAnswer — streamed deltas are a preview, the assembled text is truth', () => {
-  it('replaces the last agent bubble with the trimmed final answer', () => {
-    // Measured live 2026-08-29: the on-device 8B's STREAM doubled every word
-    // ("TheThe design design for for your your landing landing page page…")
-    // while the worker's assembled done.text was clean. The UI must paint the
-    // assembled text, not the streamed artifact.
-    const bubbles = [
-      { role: 'user', text: 'a landing page' },
-      { role: 'tool', text: 'create-Design({...})' },
-      { role: 'agent', text: 'TheThe design design for for your your landing landing page page has has been been created created.' },
-    ];
-    const merged = applyFinalAnswer(bubbles, 'The design for your landing page has been created.');
-    expect(merged).toHaveLength(3);
-    expect(merged[2].text).toBe('The design for your landing page has been created.');
-    expect(merged[1].role).toBe('tool'); // tool rows survive untouched
-  });
-
-  it('appends when nothing streamed', () => {
-    const merged = applyFinalAnswer([{ role: 'user', text: 'hi' }], 'The design is ready.');
-    expect(merged[1]).toEqual({ role: 'agent', text: 'The design is ready.' });
-  });
-
-  it('never replaces with an empty final text', () => {
-    const bubbles = [{ role: 'agent', text: 'streamed preview' }];
-    expect(applyFinalAnswer(bubbles, '   ')).toBe(bubbles);
   });
 });

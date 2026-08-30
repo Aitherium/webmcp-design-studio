@@ -190,10 +190,15 @@ export async function syncGenerateImage(
 
 /**
  * Pull a data URL out of the shapes real providers return:
- *   {images: [dataUrl, ...]}        AitherBonsaiImage /v1/generate
- *   {dataUrl} / {image}             single-image convenience shapes
- *   {result: {image|dataUrl|url}}   nested wrappers
- *   {url}                           a URL the provider wants us to fetch
+ *   {images: [dataUrl, ...]}          AitherBonsaiImage /v1/generate
+ *   {dataUrl} / {image}               single-image convenience shapes
+ *   {result: {image|dataUrl|url}}     nested wrappers
+ *   {result: {images: [...]}}         media-forge canvas_compat (D-192, live 08-30)
+ *   {url}                             a URL the provider wants us to fetch
+ *
+ * A bare base64 payload (no `data:` prefix — media-forge returns raw bytes)
+ * is WRAPPED, never fetched: urlToDataUrl would try to fetch "iVBORw0…" as a
+ * URL and fail with a misleading "failed fetching returned URL" error.
  */
 export async function normalizeImageResponse(
   body: unknown,
@@ -210,7 +215,7 @@ export async function normalizeImageResponse(
     image?: unknown;
     dataUrl?: unknown;
     url?: unknown;
-    result?: { image?: unknown; dataUrl?: unknown; url?: unknown };
+    result?: { image?: unknown; dataUrl?: unknown; url?: unknown; images?: unknown };
   };
 
   if (b.success === false) {
@@ -222,7 +227,9 @@ export async function normalizeImageResponse(
 
   const candidate = firstImage(b);
   if (typeof candidate === 'string' && candidate.length > 0) {
-    return candidate.startsWith('data:') ? candidate : await urlToDataUrl(candidate, options?.signal);
+    if (candidate.startsWith('data:')) return candidate;
+    if (isBareBase64(candidate)) return `data:image/png;base64,${candidate}`;
+    return await urlToDataUrl(candidate, options?.signal);
   }
   if (candidate) {
     // object-shaped image (e.g. {url}) — try the same normalization on it
@@ -236,12 +243,13 @@ function firstImage(b: {
   image?: unknown;
   dataUrl?: unknown;
   url?: unknown;
-  result?: { image?: unknown; dataUrl?: unknown; url?: unknown };
+  result?: { image?: unknown; dataUrl?: unknown; url?: unknown; images?: unknown };
 }): unknown {
   if (Array.isArray(b.images) && b.images.length > 0) return b.images[0];
   if (typeof b.image === 'string' || (typeof b.image === 'object' && b.image !== null)) return b.image;
   if (typeof b.dataUrl === 'string') return b.dataUrl;
   if (b.result) {
+    if (Array.isArray(b.result.images) && b.result.images.length > 0) return b.result.images[0];
     if (typeof b.result.image === 'string' || (typeof b.result.image === 'object' && b.result.image !== null)) {
       return b.result.image;
     }
@@ -250,6 +258,23 @@ function firstImage(b: {
   }
   if (typeof b.url === 'string') return b.url;
   return undefined;
+}
+
+/**
+ * True for a raw base64 payload that must be wrapped as a data URL, never
+ * fetched. Discriminated from a relative URL by construction: a URL path has
+ * a '.' (extension) or is short; a real image payload is long, length % 4 == 0,
+ * and carries no '.' or ':' (the '/' base64 character IS allowed — a path
+ * would also have a '.', which a payload cannot).
+ */
+function isBareBase64(s: string): boolean {
+  return (
+    s.length >= 64 &&
+    s.length % 4 === 0 &&
+    !s.includes(':') &&
+    !s.includes('.') &&
+    /^[A-Za-z0-9+/=]+$/.test(s)
+  );
 }
 
 /** Fetch a returned image URL and read it as a data URL (cross-origin ok when CORS allows). */

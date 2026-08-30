@@ -16,25 +16,11 @@ export function FabricCanvas() {
   const doc = useStudio((s) => s.docs.find((d) => d.id === s.currentDocId) ?? null);
   const commit = useStudio((s) => s.commitBatch);
   const discard = useStudio((s) => s.discardBatch);
-  // An empty design with a light background is INVISIBLE on a light page —
-  // the canvas frame (CSS) gives it a physical edge, and this hint tells the
-  // owner the design exists and is waiting for elements. Measured live
-  // 2026-08-29: the agent created a white poster and the owner said "wait I
-  // dont see it" — the design was current and rendered; it was white-on-white.
-  const isEmptyDesign = Boolean(doc) && doc!.elements.length === 0 && !pendingBatch;
 
   return (
     <div className="canvas-frame">
       <div className="canvas-scroll">
         <canvas ref={canvasElRef} className="design-canvas" />
-        {isEmptyDesign && (
-          <div className="canvas-empty" role="status">
-            <span className="canvas-empty-title">Empty design — it's real, just blank</span>
-            <span className="canvas-empty-sub">
-              The {doc!.palette} canvas is ready. Ask the agent to add text, images or shapes.
-            </span>
-          </div>
-        )}
       </div>
 
       {doc && (

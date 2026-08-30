@@ -11,7 +11,6 @@ on:
       - 'vite.config.ts'
       - '.env.production'
       - 'public/**'
-      - 'tests/**'
       - '.github/workflows/pages-deploy.yml'
   workflow_dispatch:
 
