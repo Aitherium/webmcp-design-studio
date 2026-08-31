@@ -362,3 +362,25 @@ describe('the declared tools block stays COMPACT — the prefill budget', () => 
     expect(gen?.description).toBe('Generate image');
   });
 });
+
+/* ── onToolResult — the transcript result rows (the owner's visibility ask) ── */
+
+describe('runToolLoop onToolResult — every executed call reports its outcome', () => {
+  it('fires with the executed tool response so the transcript can show it', async () => {
+    const worker = fakeWorker([
+      { text: '<tool_call>{"name": "create-design", "arguments": {}}</tool_call>' },
+      { text: 'Created.' },
+    ]);
+    const seen: Array<{ name: string; response: string }> = [];
+    await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'make it',
+      executor: recordingExecutor([]),
+      onToolResult: (call, response) => void seen.push({ name: call.name, response }),
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].name).toBe('create-design');
+    expect(seen[0].response).toBe('executed create-design');
+  });
+});
