@@ -607,6 +607,7 @@ export class AgentLoader {
 
     this.emit({ type: 'phase', kind: 'text', phase: 'loading' });
     this.emit({ type: 'progress', kind: 'text', progress: 0, detail: `loading ${model.label} (${model.sizeMb} MB)` });
+    await this.reportAdapter('text');
 
     try {
       const mod = this.runtimeModules?.text ?? ((await import(/* @vite-ignore */ WEBML_RUNTIME_URL)) as WebMLRuntimeModule);
@@ -715,6 +716,7 @@ export class AgentLoader {
 
     this.emit({ type: 'phase', kind: 'image', phase: 'loading' });
     this.emit({ type: 'progress', kind: 'image', progress: 5, detail: 'acquiring WebGPU device' });
+    await this.reportAdapter('image');
 
     try {
       const mod = this.runtimeModules?.image ?? ((await import(/* @vite-ignore */ WEBML_IMAGE_URL)) as WebMLRuntimeModule);
@@ -758,6 +760,34 @@ export class AgentLoader {
         'image',
         this.verdict?.tier ?? null,
       );
+    }
+  }
+
+  /**
+   * Name the WebGPU adapter the browser will actually offer — so a
+   * software/fallback adapter (which explains single-digit tok/s on the Q2
+   * 4B: SwiftShader-class adapters do ~1-6 tok/s while a real GPU does
+   * 20+) is VISIBLE in the load progress instead of reading as mysterious
+   * slowness (owner ask 2026-08-30: "why is token/s still so slow when
+   * using webgpu"). Diagnostic only — the probe is non-fatal and silent on
+   * failure; it never decides a lane.
+   */
+  private async reportAdapter(kind: 'text' | 'image'): Promise<void> {
+    try {
+      const gpu = (navigator as {
+        gpu?: {
+          requestAdapter?: (opts?: { powerPreference?: string }) => Promise<{
+            info?: { description?: string; vendor?: string };
+          } | null>;
+        };
+      }).gpu;
+      const adapter = await gpu?.requestAdapter?.({ powerPreference: 'high-performance' });
+      const name = adapter?.info?.description ?? adapter?.info?.vendor;
+      if (name) {
+        this.emit({ type: 'progress', kind, progress: 5, detail: `WebGPU adapter: ${name}` });
+      }
+    } catch {
+      /* diagnostic only — never fail the load */
     }
   }
 
