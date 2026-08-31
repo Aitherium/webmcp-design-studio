@@ -1,22 +1,30 @@
 /**
- * The HOSTED agent lane — a ChatWorkerLike that talks to the fleet's
- * llama.cpp server through the tunnel host (same-origin `/api/chat/` on
- * studio-preview.aitherium.com, proxied to aither-llamacpp-bonsai:8090).
+ * OpenAI-compatible agent lanes — a ChatWorkerLike over any
+ * /chat/completions endpoint with SSE streaming.
  *
- * Why this exists (measured 2026-08-28): a device without WebGPU (Tier C)
- * had NO agent brain — the loader's on-device worker cannot start, and the
- * studio claimed a "hosted tier" that did not exist. The design tools always
- * worked; the agent could not think. This lane gives Tier C devices the same
- * agent over the same `runToolLoop`, with the model's TEXT output flowing
- * through the same <tool_call> XML parsing as the on-device worker — no tools
- * array is sent, so llama.cpp stays in plain-text mode and the model follows
- * the XML spec in the system prompt (proven live: the 27B emitted a correct
- * create-design call from the XML block).
+ * TWO lanes share this adapter:
+ *
+ * 1. The HOSTED fleet lane — talks to the fleet's llama.cpp server through
+ *    the tunnel host (same-origin `/api/chat/` on studio-preview.aitherium.com,
+ *    proxied to aither-llamacpp-bonsai:8090). Why it exists (measured
+ *    2026-08-28): a device without WebGPU (Tier C) had NO agent brain — the
+ *    loader's on-device worker cannot start, and the studio claimed a "hosted
+ *    tier" that did not exist. The design tools always worked; the agent could
+ *    not think.
+ *
+ * 2. The CUSTOM BYOK lane (2026-08-30, the WebMCP Challenge "bring your own
+ *    agent" feature) — a visitor plugs in their OWN OpenAI-compatible endpoint
+ *    + API key + model name, and their agent drives the studio's 14 WebMCP
+ *    tools through the same `runToolLoop`. The loop's protocol is
+ *    model-agnostic (the tools live in the SYSTEM PROMPT as the Hermes
+ *    `<tools>` XML block, no tools array on the wire), so GPT, Claude via
+ *    gateway, local llama.cpp, vLLM — anything that speaks
+ *    /v1/chat/completions — can drive the surface. "Your agent, our tools."
  *
  * role:'tool' messages are translated to role:'user' wrapped in
  * <tool_response> on the wire, mirroring what the on-device worker's
  * template renders (llama.cpp's native 'tool' role would fight the XML
- * convention).
+ * convention; OpenAI-compatible servers accept the text form).
  */
 import type { ChatWorkerLike, WorkerRequest, WorkerResponse } from './loader';
 
@@ -35,6 +43,24 @@ const HOSTED_BASE =
     : '/api/chat');
 const HOSTED_MODEL = 'bonsai-27b';
 
+export interface OpenAICompatibleWorkerOptions {
+  /** Base — accepts 'https://host', 'https://host/v1' or a full
+   * '/chat/completions' URL; the adapter normalizes. */
+  baseUrl: string;
+  model: string;
+  /** Sent as `Authorization: Bearer` when set (BYOK). */
+  apiKey?: string;
+}
+
+/** Normalize a user-supplied base URL to the full /chat/completions URL. */
+export function chatCompletionsUrl(base: string): string {
+  const b = base.trim().replace(/\/+$/, '');
+  if (!b) return '';
+  if (b.endsWith('/chat/completions')) return b;
+  if (b.endsWith('/v1')) return `${b}/chat/completions`;
+  return `${b}/v1/chat/completions`;
+}
+
 function wireMessages(messages: WorkerRequest & { type: 'generate' }) {
   return messages.messages.map((m) =>
     m.role === 'tool'
@@ -43,7 +69,8 @@ function wireMessages(messages: WorkerRequest & { type: 'generate' }) {
   );
 }
 
-export function createHostedChatWorker(): ChatWorkerLike {
+export function createOpenAICompatibleWorker(opts: OpenAICompatibleWorkerOptions): ChatWorkerLike {
+  const url = chatCompletionsUrl(opts.baseUrl);
   let disposed = false;
   const listeners = new Set<(msg: WorkerResponse) => void>();
   let controller: AbortController | null = null;
@@ -54,18 +81,24 @@ export function createHostedChatWorker(): ChatWorkerLike {
 
   const post = async (msg: WorkerRequest) => {
     if (msg.type !== 'generate' || disposed) return;
+    if (!url) {
+      emit({ type: 'error', message: 'custom agent: no base URL configured' });
+      return;
+    }
     controller = new AbortController();
     try {
-      const res = await fetch(`${HOSTED_BASE}/v1/chat/completions`, {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
+      const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         signal: controller.signal,
         body: JSON.stringify({
-          model: HOSTED_MODEL,
+          model: opts.model,
           messages: wireMessages(msg),
-          // The 27B reasons BEFORE it writes content — the loop's 512-token
+          // Reasoning models write AFTER thinking — the loop's 512-token
           // default got consumed by reasoning and the answer came back empty
-          // (measured 2026-08-28). Give the hosted lane real headroom.
+          // (measured 2026-08-28 on the fleet 27B). Give every lane headroom.
           max_tokens: Math.max(msg.maxTokens ?? 512, 2048),
           temperature: msg.temperature ?? 0.7,
           stream: true,
@@ -75,7 +108,7 @@ export function createHostedChatWorker(): ChatWorkerLike {
         const detail = await res.text().catch(() => '');
         emit({
           type: 'error',
-          message: `hosted agent HTTP ${res.status}${detail ? ': ' + detail.slice(0, 200) : ''}`,
+          message: `agent HTTP ${res.status}${detail ? ': ' + detail.slice(0, 200) : ''}`,
         });
         return;
       }
@@ -113,7 +146,7 @@ export function createHostedChatWorker(): ChatWorkerLike {
       if (!disposed) {
         emit({
           type: 'error',
-          message: `hosted agent failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: `agent failed: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
     }
@@ -134,4 +167,9 @@ export function createHostedChatWorker(): ChatWorkerLike {
       listeners.clear();
     },
   };
+}
+
+/** The fleet brain lane — the same adapter pointed at the studio's proxy. */
+export function createHostedChatWorker(): ChatWorkerLike {
+  return createOpenAICompatibleWorker({ baseUrl: HOSTED_BASE, model: HOSTED_MODEL });
 }

@@ -20,6 +20,7 @@ import {
   suggestBonsaiModelId,
   webmcpSurface,
   type ChatMessage,
+  type ChatWorkerLike,
 } from './loader';
 import {
   createToolExecutor,
@@ -37,6 +38,13 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
+import { createOpenAICompatibleWorker } from './hostedChat';
+import {
+  loadTextAgentConfig,
+  saveTextAgentConfig,
+  type TextAgentConfig,
+  type TextAgentMode,
+} from './textAgentConfig';
 import { unwrapToolResponse } from './scripted';
 
 interface Bubble {
@@ -155,6 +163,23 @@ export function BonsaiChat() {
     forceHosted || !window.location.hostname.endsWith('github.io');
   /** Image backend chosen in the provider panel (persisted to localStorage). */
   const [provider, setProvider] = useState<ImageProviderConfig>(() => loadProviderConfig());
+  /** BYOK text-agent config (2026-08-30, WebMCP Challenge) — on-device, the
+   * fleet brain, or the visitor's OWN OpenAI-compatible endpoint + key. */
+  const [textAgent, setTextAgent] = useState<TextAgentConfig>(() => loadTextAgentConfig());
+  const updateTextAgent = (patch: Partial<TextAgentConfig>) =>
+    setTextAgent((prev) => {
+      const next = { ...prev, ...patch };
+      saveTextAgentConfig(next);
+      return next;
+    });
+  // Custom mode never touches the loader: the visitor's own key is their own
+  // consent, so the loader gate must not block the input.
+  useEffect(() => {
+    if (textAgent.mode === 'custom') {
+      setAgent({ consent: true, phase: 'idle', lastError: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textAgent.mode]);
 
   const updateProvider = (patch: Partial<ImageProviderConfig>) => {
     setProvider((prev) => {
@@ -272,14 +297,26 @@ export function BonsaiChat() {
         // hard instruction when a directive turn ends with the design empty.
         // The scripted plan code stays in ./scripted (tested) as a library —
         // it is no longer invoked.
-        const worker = agentLoader.getChatWorker();
-        if (!worker) {
-          // Lazy first-use load (consent already given or the chip was bypassed
-          // by device:'auto' tool calls — the loader enforces consent).
-          await agentLoader.ensureModel('text', { modelId: chosenModel ?? defaultModel });
-          setAgent({ modelId: chosenModel ?? defaultModel });
+        // BYOK (2026-08-30): the visitor's own OpenAI-compatible endpoint
+        // drives the SAME loop + the same 14 WebMCP tools — no loader, no
+        // consent, no model download; the key is theirs, the surface is ours.
+        let w: ChatWorkerLike;
+        if (textAgent.mode === 'custom' && textAgent.baseUrl.trim()) {
+          w = createOpenAICompatibleWorker({
+            baseUrl: textAgent.baseUrl,
+            model: textAgent.model.trim() || 'gpt-4o-mini',
+            apiKey: textAgent.apiKey.trim() || undefined,
+          });
+        } else {
+          const worker = agentLoader.getChatWorker();
+          if (!worker) {
+            // Lazy first-use load (consent already given or the chip was bypassed
+            // by device:'auto' tool calls — the loader enforces consent).
+            await agentLoader.ensureModel('text', { modelId: chosenModel ?? defaultModel });
+            setAgent({ modelId: chosenModel ?? defaultModel });
+          }
+          w = agentLoader.getChatWorker()!;
         }
-        const w = agentLoader.getChatWorker()!;
         // The previous exhausted turn's cut-off tool result enters this turn's
         // context ONCE (then cleared) — "continue" must not re-run blind.
         const priorResult = lastExhaustedRef.current;
@@ -439,6 +476,48 @@ export function BonsaiChat() {
             onChange={(e) => updateProvider({ apiKey: e.target.value })}
             aria-label="image backend API key"
           />
+        )}
+      </div>
+
+      {/* Text agent — BYOK lane (2026-08-30, WebMCP Challenge): the visitor's
+          own OpenAI-compatible endpoint + key drives the studio's tools. */}
+      <div className="agent-backend" role="group" aria-label="text agent">
+        <span className="agent-backendlabel">Text agent</span>
+        <select
+          className="agent-backendselect"
+          value={textAgent.mode}
+          onChange={(e) => updateTextAgent({ mode: e.target.value as TextAgentMode })}
+          aria-label="text agent mode"
+        >
+          <option value="on-device">On-device (WebGPU)</option>
+          <option value="fleet">Fleet — Bonsai 27B</option>
+          <option value="custom">Custom — your own API key</option>
+        </select>
+        {textAgent.mode === 'custom' && (
+          <>
+            <input
+              className="agent-backendurl"
+              value={textAgent.baseUrl}
+              placeholder="https://api.openai.com/v1"
+              onChange={(e) => updateTextAgent({ baseUrl: e.target.value })}
+              aria-label="text agent base URL"
+            />
+            <input
+              className="agent-backendkey"
+              type="password"
+              value={textAgent.apiKey}
+              placeholder="API key"
+              onChange={(e) => updateTextAgent({ apiKey: e.target.value })}
+              aria-label="text agent API key"
+            />
+            <input
+              className="agent-backendkey"
+              value={textAgent.model}
+              placeholder="model (e.g. gpt-4o-mini)"
+              onChange={(e) => updateTextAgent({ model: e.target.value })}
+              aria-label="text agent model"
+            />
+          </>
         )}
       </div>
 
