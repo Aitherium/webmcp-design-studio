@@ -96,8 +96,60 @@ function currentDoc(s: StudioState): DesignDoc | null {
   return s.docs.find((d) => d.id === s.currentDocId) ?? null;
 }
 
-export const createStudioStore = () =>
-  create<StudioState>()((set, get) => {
+/* ── persistence (the "I SEE NOTHING" fix, 2026-08-30) ────────────────────────
+ * The store booted with docs:[] and NO persistence — every reload wiped the
+ * design, and with no doc the canvas rendered 0x0 with no message: a fresh
+ * load showed literally NOTHING while the person's poster was gone (measured
+ * live: the owner reloaded repeatedly through the session to pick up new
+ * bundles, losing each poster; "I SEE NOTHING..... JFC" was the empty canvas
+ * with no doc and no hint). Docs + current doc + the pending batch now
+ * persist to localStorage (debounced), so a reload keeps the work. The chat
+ * transcript stays component-state (out of scope); the DESIGN is the work. */
+
+export const STATE_STORAGE_KEY = 'webmcp.studio.state.v1';
+
+export interface PersistedStudioState {
+  docs: DesignDoc[];
+  currentDocId: string | null;
+  pendingBatch: PendingBatch | null;
+}
+
+export function serializeStudioState(s: {
+  docs: DesignDoc[];
+  currentDocId: string | null;
+  pendingBatch: PendingBatch | null;
+}): string {
+  return JSON.stringify({ docs: s.docs, currentDocId: s.currentDocId, pendingBatch: s.pendingBatch });
+}
+
+export function parsePersistedState(raw: string | null): PersistedStudioState | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedStudioState>;
+    if (!Array.isArray(parsed.docs) || typeof parsed.currentDocId !== 'string' && parsed.currentDocId !== null) {
+      return null;
+    }
+    return {
+      docs: parsed.docs,
+      currentDocId: parsed.currentDocId ?? null,
+      pendingBatch: parsed.pendingBatch ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadPersisted(): PersistedStudioState | null {
+  try {
+    return parsePersistedState(localStorage.getItem(STATE_STORAGE_KEY));
+  } catch {
+    return null; // private mode / blocked storage — start fresh
+  }
+}
+
+export const createStudioStore = () => {
+  const persisted = loadPersisted();
+  const store = create<StudioState>()((set, get) => {
     /** Per-design version stacks of pre-commit docs. */
     const versions: Record<string, DesignDoc[]> = {};
 
@@ -111,9 +163,9 @@ export const createStudioStore = () =>
     };
 
     return {
-      docs: [],
-      currentDocId: null,
-      pendingBatch: null,
+      docs: persisted?.docs ?? [],
+      currentDocId: persisted?.currentDocId ?? null,
+      pendingBatch: persisted?.pendingBatch ?? null,
       liveToolNames: [],
       webmcpStatus: null,
       runtimeStatus: null,
@@ -296,6 +348,33 @@ export const createStudioStore = () =>
       },
     };
   });
+
+  // Persistence — debounced save of the DESIGN state only (docs + current doc
+  // + the pending batch), so token-stream / agent-progress churn never writes.
+  // Image srcs are multi-MB data URLs; a quota overflow is caught and the
+  // session simply continues unsaved (reload loses only what did not fit).
+  let lastSaved = serializeStudioState({
+    docs: persisted?.docs ?? [],
+    currentDocId: persisted?.currentDocId ?? null,
+    pendingBatch: persisted?.pendingBatch ?? null,
+  });
+  let saveTimer: number | undefined;
+  store.subscribe((state) => {
+    const snap = serializeStudioState(state);
+    if (snap === lastSaved) return;
+    lastSaved = snap;
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(STATE_STORAGE_KEY, snap);
+      } catch {
+        /* quota / private mode — the session continues, unsaved */
+      }
+    }, 250);
+  });
+
+  return store;
+};
 
 /** The app-wide singleton — UI subscribes here; tools read it via getStudioStore(). */
 export const useStudio = createStudioStore();

@@ -27,11 +27,19 @@ export function FabricCanvas() {
     <div className="canvas-frame">
       <div className="canvas-scroll">
         <canvas ref={canvasElRef} className="design-canvas" />
-        {isEmptyDesign && (
+        {!doc && (
+          <div className="canvas-empty" role="status">
+            <span className="canvas-empty-title">No design yet</span>
+            <span className="canvas-empty-sub">
+              Ask the agent for a poster, flyer or story and it will create the design here.
+            </span>
+          </div>
+        )}
+        {doc && isEmptyDesign && (
           <div className="canvas-empty" role="status">
             <span className="canvas-empty-title">Empty design — it's real, just blank</span>
             <span className="canvas-empty-sub">
-              The {doc!.palette} canvas is ready. Ask the agent to add text, images or shapes.
+              The {doc.palette} canvas is ready. Ask the agent to add text, images or shapes.
             </span>
           </div>
         )}

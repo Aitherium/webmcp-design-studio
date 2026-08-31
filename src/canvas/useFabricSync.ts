@@ -145,6 +145,7 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
     let syncQueue: Promise<void> = Promise.resolve();
     const sync = (): Promise<void> => {
       syncQueue = syncQueue.then(async () => {
+        try {
         if (disposedRef.current) return;
       const state = getStudioStore().getState();
       const doc = state.docs.find((d) => d.id === state.currentDocId) ?? null;
@@ -153,8 +154,12 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
       // Canvas size + background only when the design (or its size) changed.
       if (docIdRef.current !== (doc?.id ?? null)) {
         docIdRef.current = doc?.id ?? null;
-        const w = eff?.size.width ?? 0;
-        const h = eff?.size.height ?? 0;
+        // A fresh session has no doc — a 0x0 canvas renders literally
+        // NOTHING (measured live 2026-08-30, the "I SEE NOTHING" report).
+        // Default to a standard poster frame so the canvas + the empty
+        // hint are visible until the agent creates the design.
+        const w = eff?.size.width ?? 1080;
+        const h = eff?.size.height ?? 1440;
         canvas.setDimensions({ width: w, height: h });
         canvas.backgroundColor = eff ? resolveBackground(eff) : '#000103';
         canvas.requestRenderAll();
@@ -198,6 +203,12 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
       });
 
       canvas.requestRenderAll();
+        } catch (err) {
+          // ONE failing pass must not kill the queue: the next sync would
+          // chain onto a rejected promise and the canvas would never update
+          // again (the queue makes a single throw fatal to rendering).
+          console.error('[fabric-sync] sync pass failed', err);
+        }
       });
       return syncQueue;
     };
