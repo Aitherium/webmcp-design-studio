@@ -22,7 +22,17 @@ describe('webml-image.esm.js — VAE fetcher binding', () => {
   it('binds the VAE reads to a VAE-scoped fetcher (the 2026-08-30 Tier-A fix)', () => {
     expect(bundle).toContain('const vaeFetcher = httpRangeFetcher(init.vaeWeightsUrl)');
     expect(bundle).toContain('readSafetensorsIndex(init.vaeWeightsUrl, vaeFetcher)');
-    expect(bundle).toContain('await vaeFetcher(t.start, t.start + t.length - 1)');
+    expect(bundle).toContain('vaeFetcher(t.start, t.start + t.length - 1)');
+  });
+
+  it('fetches the 251 tensors in BATCHES of 12, not serially (the 2026-08-30 "20% then disappeared": 63.6s serial > the 60s loader timeout; 13.5s batched)', () => {
+    // The serial loop measured 63.6s against the live CDN — over the loader's
+    // 60s load timeout, so the load died mid-sequence, the lane got struck,
+    // and every attempt fell to the fleet lane (device:"cloud" in the trace).
+    expect(bundle).toContain('for (let i = 0; i < VAETensors.length; i += 12)');
+    expect(bundle).toContain('Promise.all(');
+    // Progress must move between batches, not sit at "vae decoder (20%)".
+    expect(bundle).toContain('progress("weights", 20 + Math.round((i / VAETensors.length) * 10), "vae decoder")');
   });
 
   it('never passes the main-weights fetcher into the VAE reader (the bug shape)', () => {

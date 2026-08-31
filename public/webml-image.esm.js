@@ -1951,44 +1951,62 @@ async function createBonsaiImageRuntime(init) {
     const vaeFetcher = httpRangeFetcher(init.vaeWeightsUrl);
     const vaeIndex = await readSafetensorsIndex(init.vaeWeightsUrl, vaeFetcher);
     const preloaded = /* @__PURE__ */ new Map();
-    for (const [name, t] of vaeIndex) {
-      const raw = await vaeFetcher(t.start, t.start + t.length - 1);
-      if (t.dtype === "F32") {
-        preloaded.set(
-          name,
-          new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + t.length))
-        );
-      } else if (t.dtype === "F16") {
-        const out = new Float32Array(t.length / 2);
-        const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
-        for (let i = 0; i < out.length; i++) out[i] = halfToF32(dv.getUint16(i * 2, true));
-        preloaded.set(name, out);
-      } else if (t.dtype === "BF16") {
-        // BatchNorm running stats export as BF16 in this VAE (measured live
-        // 2026-08-30 on Tier A: "vae weights: 'bn.running_mean' has
-        // unsupported dtype BF16" — a REAL inference tensor, not a counter).
-        // BF16 is the top 16 bits of F32, so the conversion is a shift.
-        // FIX (2026-08-30, the "20% then nothing" wedge): the per-element
-        // form called bf16ToF32 — which ALLOCATES a Uint32Array +
-        // Float32Array PER ELEMENT. 168 MB of BF16 = 84M heap allocations
-        // on the MAIN thread with no progress event between tensors, so the
-        // UI froze at "vae decoder (20%)" for minutes and read as a hang
-        // (the fetch was never the stall — httpRangeFetcher has a watchdog).
-        // Bulk form: one typed-array shift per element, zero allocations.
-        const out = new Float32Array(t.length / 2);
-        const src = new Uint16Array(raw.buffer, raw.byteOffset, t.length / 2);
-        const dst = new Uint32Array(out.buffer);
-        for (let i = 0; i < src.length; i++) dst[i] = src[i] << 16;
-        preloaded.set(name, out);
-      } else if (t.dtype === "I64" || t.dtype === "I32") {
-        // Training-only counters (PyTorch BatchNorm's bn.num_batches_tracked
-        // is I64) — never read at inference, and throwing here killed the
-        // WHOLE VAE load (measured live 2026-08-30 on Tier A: "vae weights:
-        // 'bn.num_batches_tracked' has unsupported dtype I64"). A tensor the
-        // op table actually NEEDS with a truly unknown dtype still throws.
-        continue;
-      } else {
-        throw new Error(`vae weights: '${name}' has unsupported dtype ${t.dtype}`);
+    // FIX (2026-08-30, "20% then disappeared"): the ORIGINAL loop fetched the
+    // 251 tensors SERIALLY — measured live against the CDN: 63.6s for the
+    // 160 MB, which EXCEEDS the loader's 60s load timeout, so the load died
+    // mid-sequence, the lane got struck, and every attempt fell to the fleet
+    // lane (device:"cloud" in the live trace). Fetching in batches of 12
+    // measured 13.5s — comfortably inside the timeout. Progress emits per
+    // batch so the UI moves instead of sitting at "vae decoder (20%)" for
+    // the whole load.
+    const VAETensors = vaeIndex;
+    for (let i = 0; i < VAETensors.length; i += 12) {
+      const slice = VAETensors.slice(i, i + 12);
+      const raws = await Promise.all(
+        slice.map(([n, t]) => vaeFetcher(t.start, t.start + t.length - 1))
+      );
+      progress("weights", 20 + Math.round((i / VAETensors.length) * 10), "vae decoder");
+      for (let k = 0; k < slice.length; k++) {
+        const [name, t] = slice[k];
+        const raw = raws[k];
+        if (t.dtype === "F32") {
+          preloaded.set(
+            name,
+            new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + t.length))
+          );
+        } else if (t.dtype === "F16") {
+          const out = new Float32Array(t.length / 2);
+          const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
+          for (let i = 0; i < out.length; i++) out[i] = halfToF32(dv.getUint16(i * 2, true));
+          preloaded.set(name, out);
+        } else if (t.dtype === "BF16") {
+          // BatchNorm running stats export as BF16 in this VAE (measured live
+          // 2026-08-30 on Tier A: "vae weights: 'bn.running_mean' has
+          // unsupported dtype BF16" — a REAL inference tensor, not a counter).
+          // BF16 is the top 16 bits of F32, so the conversion is a shift.
+          // FIX (2026-08-30, the "20% then nothing" wedge): the per-element
+          // form called bf16ToF32 — which ALLOCATES a Uint32Array +
+          // Float32Array PER ELEMENT. 168 MB of BF16 = 84M heap allocations
+          // on the MAIN thread with no progress event between tensors, so the
+          // UI froze at "vae decoder (20%)" for minutes and read as a hang.
+          // Bulk form: one typed-array shift per element, zero allocations.
+          // (The SERIAL FETCH, fixed above in the same change, was the second
+          // bottleneck: 63.6s serial vs 13.5s batched — measured live.)
+          const out = new Float32Array(t.length / 2);
+          const src = new Uint16Array(raw.buffer, raw.byteOffset, t.length / 2);
+          const dst = new Uint32Array(out.buffer);
+          for (let i = 0; i < src.length; i++) dst[i] = src[i] << 16;
+          preloaded.set(name, out);
+        } else if (t.dtype === "I64" || t.dtype === "I32") {
+          // Training-only counters (PyTorch BatchNorm's bn.num_batches_tracked
+          // is I64) — never read at inference, and throwing here killed the
+          // WHOLE VAE load (measured live 2026-08-30 on Tier A: "vae weights:
+          // 'bn.num_batches_tracked' has unsupported dtype I64"). A tensor the
+          // op table actually NEEDS with a truly unknown dtype still throws.
+          continue;
+        } else {
+          throw new Error(`vae weights: '${name}' has unsupported dtype ${t.dtype}`);
+        }
       }
     }
     vaeTable = vaeOpTable(preloaded);
