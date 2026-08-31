@@ -1,58 +1,58 @@
 /**
- * iris-generate — the IRIS autonomous image pipeline, as a WebMCP tool
- * (2026-08-31, the WebMCP demo). IRIS is the platform's Visual Artisan
- * (:8786): prompt ENHANCEMENT → generation → VISION evaluation → iterative
- * refinement, up to max_rounds. The tool runs the FULL pipeline and places
- * the final image in the design as an element (UNCOMMITTED until
- * approve-batch).
+ * iris-generate — the IRIS Visual Artisan (:8786), as a WebMCP tool
+ * (2026-08-31, the WebMCP demo). The REAL contract (measured live that day
+ * against the running service's OpenAPI): IRIS has NO /generate/json — the
+ * single-shot route is POST /quick ({prompt, negative_prompt, width, height,
+ * enhance}); the multi-asset /pipeline* routes take a design BRIEF object,
+ * not a prompt. The first version shipped /generate/json from an assumed
+ * contract and 404'd on the real service.
  *
- * The result carries the pipeline story — best_score, refinement_rounds and
- * the steps — so the agent can tell the person what the pipeline decided,
- * which is the "autonomous artisan" demo: the rounds are NOT a spinner, the
- * evaluation scores are visible.
+ * enhance: true runs IRIS's AI prompt-optimization step, so the result still
+ * carries the "autonomous artisan" story — the agent can tell the person the
+ * optimized prompt the pipeline decided on. The image is placed in the
+ * design as an element (UNCOMMITTED until approve-batch).
+ *
+ * The response (live-verified shape): {success, image, prompt_used,
+ * original_prompt, plan: {optimized_prompt, style_tags}, duration_ms}.
  */
 import type { ToolDefinition } from '../types';
 import { ok, fail } from '../execute-io';
 import { getStudioStore } from '../../state/store';
-import { argEnum, argNumber, argString, ToolError, currentBatchSummary, snapshot } from './helpers';
+import { argEnum, argString, ToolError, currentBatchSummary, snapshot } from './helpers';
 import { withTimeout, withGenerationHeartbeat, IMAGE_DIMENSIONS, fitOnDeviceDims } from './image';
 import { IRIS_BASE, normalizeServiceImage } from './serviceBases';
 import { makeThumbnail } from './thumbnail';
 
-/** The autonomous pipeline can run rounds of generation + vision evaluation
- * (default max_rounds=3) — a 5-minute budget with a live heartbeat. */
+/** The full /quick path is prompt-enhance (LLM) + a generation against a
+ * shared single-process backend measured at ~174s per job — a 5-minute
+ * budget with a live heartbeat. */
 const IRIS_TIMEOUT_MS = 300_000;
 
-export interface IrisPipelineResult {
+export interface IrisQuickResult {
   success: boolean;
   image?: unknown;
-  images?: unknown[];
-  best_score?: number;
-  refinement_rounds?: number;
-  steps?: Array<{ type?: string; evaluation?: { score?: number; overall?: string } }>;
-  plan?: { optimized_prompt?: string };
+  prompt_used?: string;
+  original_prompt?: string;
+  plan?: { optimized_prompt?: string; style_tags?: string[] };
+  duration_ms?: number;
 }
 
-export function extractIrisImage(body: IrisPipelineResult): string | null {
+export function extractIrisImage(body: IrisQuickResult): string | null {
   if (!body?.success) return null;
-  for (const candidate of [body.image, ...(body.images ?? [])]) {
-    const url = normalizeServiceImage(candidate);
-    if (url) return url;
-  }
-  return null;
+  const url = normalizeServiceImage(body.image);
+  return url;
 }
 
 export const irisGenerateTool: ToolDefinition = {
   name: 'iris-generate',
-  title: 'Generate image with Iris (autonomous refinement)',
+  title: 'Generate image with Iris (AI-optimized prompt)',
   description:
-    'Run the IRIS autonomous image pipeline — prompt enhancement, generation, VISUAL evaluation and iterative refinement (up to max_rounds) — and place the final image in the design as an element (UNCOMMITTED until approve-batch). Use this when the person wants a refined, self-evaluated image rather than a single shot. size: square, wide, tall. maxRounds: how many evaluate-refine rounds (default 3).',
+    'Run IRIS, the platform\'s Visual Artisan: it AI-optimizes the prompt, then generates a single high-quality image, and places it in the design as an element (UNCOMMITTED until approve-batch). size: square, wide, tall. Use this when the person wants a refined, professionally-composed image rather than a raw single shot.',
   inputSchema: {
     type: 'object',
     properties: {
       prompt: { type: 'string', description: 'Natural-language image prompt' },
       size: { type: 'string', enum: ['square', 'wide', 'tall'] },
-      maxRounds: { type: 'number', description: 'Evaluation/refinement rounds (1-5, default 3)' },
     },
     required: ['prompt'],
   },
@@ -63,35 +63,33 @@ export const irisGenerateTool: ToolDefinition = {
 
     const prompt = argString(args, 'prompt', { required: true, maxLength: 2000 })!;
     const size = (argEnum(args, 'size', ['square', 'wide', 'tall']) ?? 'square') as 'square' | 'wide' | 'tall';
-    const maxRounds = Math.min(Math.max(argNumber(args, 'maxRounds', { integer: true, min: 1 }) ?? 3, 1), 5);
     const dims = fitOnDeviceDims(IMAGE_DIMENSIONS[size]);
 
     try {
-      const body = (await withTimeout(IRIS_TIMEOUT_MS, 'iris pipeline', () =>
-        withGenerationHeartbeat(`iris pipeline (up to ${maxRounds} refinement rounds)`, async () => {
-          const res = await fetch(`${IRIS_BASE}/generate/json`, {
+      const body = (await withTimeout(IRIS_TIMEOUT_MS, 'iris generation', () =>
+        withGenerationHeartbeat('iris (prompt optimization + generation)', async () => {
+          const res = await fetch(`${IRIS_BASE}/quick`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt,
               width: dims.width,
               height: dims.height,
-              max_rounds: maxRounds,
-              stream: false,
+              enhance: true,
             }),
           });
           if (!res.ok) {
-            throw new ToolError(`iris pipeline HTTP ${res.status}${res.status === 404 ? ' — the iris relay is not configured on this origin yet' : ''}`);
+            throw new ToolError(`iris HTTP ${res.status}${res.status === 404 ? ' — the iris relay is not configured on this origin yet' : ''}`);
           }
-          return (await res.json()) as IrisPipelineResult;
+          return (await res.json()) as IrisQuickResult;
         }),
-      )) as IrisPipelineResult;
+      )) as IrisQuickResult;
 
       const dataUrl = extractIrisImage(body);
       if (!dataUrl) {
-        const roundInfo =
-          body.refinement_rounds != null ? ` after ${body.refinement_rounds} refinement round(s)` : '';
-        throw new ToolError(`iris pipeline returned no usable image${roundInfo}${body.success ? '' : ' (pipeline did not succeed)'}`);
+        throw new ToolError(
+          `iris returned no usable image${body.success ? '' : ' (the pipeline did not succeed)'}`,
+        );
       }
 
       const canvas = doc.size;
@@ -111,17 +109,13 @@ export const irisGenerateTool: ToolDefinition = {
         opacity: 1,
       });
       if (!elementId) return fail('could not place the iris image in the design');
-      const evaluation = body.steps?.find((s) => s.evaluation)?.evaluation;
       return ok(
         JSON.stringify({
           elementId,
           device: 'iris',
-          bestScore: body.best_score ?? null,
-          refinementRounds: body.refinement_rounds ?? null,
-          evaluation: evaluation
-            ? { score: evaluation.score ?? null, overall: evaluation.overall ?? null }
-            : null,
           optimizedPrompt: body.plan?.optimized_prompt ?? null,
+          promptUsed: body.prompt_used ?? null,
+          durationMs: body.duration_ms ?? null,
           batchSummary: currentBatchSummary(),
         }),
       );

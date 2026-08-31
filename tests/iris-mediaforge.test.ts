@@ -66,38 +66,54 @@ describe('normalizeServiceImage — the shared image-shape normalizer', () => {
   });
 });
 
-describe('iris-generate — the autonomous pipeline tool', () => {
-  it('extractIrisImage picks the pipeline result from all its shapes', () => {
+describe('iris-generate — the /quick single-shot tool', () => {
+  it('extractIrisImage picks the /quick result image', () => {
     expect(extractIrisImage({ success: true, image: `data:image/png;base64,${TINY_PNG_B64}` })).toBe(
       `data:image/png;base64,${TINY_PNG_B64}`,
     );
-    expect(extractIrisImage({ success: true, images: [LONG_PNG_B64] })).toBe(
+    expect(extractIrisImage({ success: true, image: LONG_PNG_B64 })).toBe(
       `data:image/png;base64,${LONG_PNG_B64}`,
     );
     expect(extractIrisImage({ success: true, image: 'https://x/y.png' })).toBeNull();
     expect(extractIrisImage({ success: false, image: LONG_PNG_B64 })).toBeNull();
   });
 
-  it('executes the full pipeline, places the element, and reports the story', async () => {
-    stubFetchJson({
-      success: true,
-      image: `data:image/png;base64,${TINY_PNG_B64}`,
-      best_score: 8.5,
-      refinement_rounds: 2,
-      steps: [{ type: 'evaluate', evaluation: { score: 8.5, overall: 'strong composition' } }],
-      plan: { optimized_prompt: 'a glowing neon coffee cup' },
-    });
+  it('POSTs the REAL contract (/quick, enhance:true) and reports the optimized prompt', async () => {
+    let posted: { url: unknown; body?: string } = { url: null };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        posted = { url, body: String(init?.body) };
+        return new Response(
+          JSON.stringify({
+            success: true,
+            image: `data:image/png;base64,${TINY_PNG_B64}`,
+            prompt_used: 'a glowing neon coffee cup, masterpiece',
+            original_prompt: 'a coffee cup',
+            plan: { optimized_prompt: 'a glowing neon coffee cup, masterpiece', style_tags: ['neon'] },
+            duration_ms: 174000,
+          }),
+          { status: 200 },
+        );
+      }),
+    );
     const out = await irisGenerateTool.execute(
-      { prompt: 'a coffee cup', size: 'square', maxRounds: 2 },
+      { prompt: 'a coffee cup', size: 'square' },
       { signal: new AbortController().signal },
     );
+    // The route is /quick — /generate/json does not exist on IRIS (measured
+    // live 2026-08-31: 404 {"detail":"Not Found"} from the real service).
+    expect(String(posted.url)).toContain('/quick');
+    const sent = JSON.parse(posted.body ?? '{}') as Record<string, unknown>;
+    expect(sent.prompt).toBe('a coffee cup');
+    expect(sent.enhance).toBe(true);
+    expect(sent.width).toBeGreaterThan(0);
     const parsed = JSON.parse(textOf(out)) as Record<string, unknown>;
     expect(parsed.elementId).toBeTruthy();
     expect(parsed.device).toBe('iris');
-    expect(parsed.bestScore).toBe(8.5);
-    expect(parsed.refinementRounds).toBe(2);
-    expect(parsed.evaluation).toMatchObject({ score: 8.5, overall: 'strong composition' });
     expect(parsed.optimizedPrompt).toContain('neon');
+    expect(parsed.promptUsed).toContain('masterpiece');
+    expect(parsed.durationMs).toBe(174000);
   });
 
   it('fails LOUD with the relay hint on a 404 (the slice-2 boundary)', async () => {
