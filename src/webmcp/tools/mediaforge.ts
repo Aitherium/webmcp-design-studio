@@ -16,7 +16,7 @@ import { ok, fail } from '../execute-io';
 import { getStudioStore } from '../../state/store';
 import { argString, ToolError, currentBatchSummary } from './helpers';
 import { withTimeout, withGenerationHeartbeat } from './image';
-import { MEDIAFORGE_BASE, normalizeServiceImage } from './serviceBases';
+import { MEDIAFORGE_BASE } from './serviceBases';
 import { makeThumbnail } from './thumbnail';
 import { effectiveDoc } from '../../state/doc';
 
@@ -41,13 +41,17 @@ export function resolveImageTarget(
   return { elementId: el.id, src: el.src as string };
 }
 
-export function extractRemoveBgImage(body: { success?: boolean; image?: unknown; dataUrl?: unknown; result?: { image?: unknown; dataUrl?: unknown } }): string | null {
-  if (body?.success === false) return null;
-  for (const candidate of [body?.result?.image, body?.result?.dataUrl, body?.image, body?.dataUrl]) {
-    const url = normalizeServiceImage(candidate);
-    if (url) return url;
-  }
-  return null;
+/** Convert a data URL to a multipart FormData file — the /api/upload
+ * contract (field name `file`, measured live 2026-08-31). */
+async function dataUrlToFormData(dataUrl: string): Promise<FormData> {
+  const [head, b64] = dataUrl.split(',');
+  const mime = /data:([^;]+);/.exec(head)?.[1] ?? 'image/png';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const fd = new FormData();
+  fd.append('file', new Blob([bytes], { type: mime }), 'cutout-source.png');
+  return fd;
 }
 
 export const mediaforgeRemoveBgTool: ToolDefinition = {
@@ -72,29 +76,45 @@ export const mediaforgeRemoveBgTool: ToolDefinition = {
     if ('error' in found) return fail(found.error);
 
     try {
-      const body = (await withTimeout(REMOVE_BG_TIMEOUT_MS, 'background removal', () =>
+      const cutout = (await withTimeout(REMOVE_BG_TIMEOUT_MS, 'background removal', () =>
         withGenerationHeartbeat('removing background (BiRefNet)', async () => {
-          const res = await fetch(`${MEDIAFORGE_BASE}/op/remove_bg`, {
+          // The real contract (measured live 2026-08-31 against media-forge's
+          // OpenAPI): THREE hops — upload the image (multipart → {id}), run
+          // remove_bg on the id ({media_id} → {image: "/media/x.png"}), then
+          // fetch the cutout bytes. The first version posted {image: dataUrl}
+          // to /op/remove_bg — the route's answer was "no gallery image for
+          // media_id=<the dataUrl>": wrong path, wrong payload, wrong field.
+          const uploadRes = await fetch(`${MEDIAFORGE_BASE}/api/upload`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image: found.src }),
+            body: await dataUrlToFormData(found.src),
           });
-          if (!res.ok) {
+          if (!uploadRes.ok) {
             throw new ToolError(
-              `media-forge HTTP ${res.status}${res.status === 404 ? ' — the media-forge relay is not configured on this origin yet' : ''}`,
+              `media-forge upload HTTP ${uploadRes.status}${uploadRes.status === 404 ? ' — the media-forge relay is not configured on this origin yet' : ''}`,
             );
           }
-          const contentType = res.headers.get('content-type') ?? '';
-          if (contentType.includes('image/')) {
-            const blob = await res.blob();
-            return { image: await blobToDataUrl(blob) };
+          const uploaded = (await uploadRes.json()) as { ok?: boolean; id?: number };
+          if (!uploaded.ok || typeof uploaded.id !== 'number') {
+            throw new ToolError('media-forge upload returned no media id');
           }
-          return (await res.json()) as { success?: boolean; image?: unknown; dataUrl?: unknown; result?: { image?: unknown; dataUrl?: unknown } };
+          const bgRes = await fetch(`${MEDIAFORGE_BASE}/api/studio/remove_bg`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ media_id: uploaded.id }),
+          });
+          if (!bgRes.ok) {
+            throw new ToolError(`media-forge remove_bg HTTP ${bgRes.status}`);
+          }
+          const bg = (await bgRes.json()) as { ok?: boolean; image?: unknown };
+          const cutoutPath = typeof bg.image === 'string' && bg.image.startsWith('/') ? bg.image : null;
+          if (!bg.ok || !cutoutPath) {
+            throw new ToolError('media-forge remove_bg returned no cutout');
+          }
+          const imgRes = await fetch(`${MEDIAFORGE_BASE}${cutoutPath}`);
+          if (!imgRes.ok) throw new ToolError(`media-forge cutout fetch HTTP ${imgRes.status}`);
+          return await blobToDataUrl(await imgRes.blob());
         }),
-      )) as { success?: boolean; image?: unknown; dataUrl?: unknown; result?: { image?: unknown; dataUrl?: unknown } };
-
-      const cutout = extractRemoveBgImage(body);
-      if (!cutout) return fail('media-forge returned no cutout image');
+      )) as string;
 
       const state = getStudioStore().getState();
       const updated = state.updateElement(found.elementId, {

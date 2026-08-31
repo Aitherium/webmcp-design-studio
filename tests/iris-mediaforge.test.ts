@@ -14,7 +14,6 @@ import { irisGenerateTool, extractIrisImage } from '../src/webmcp/tools/iris';
 import {
   mediaforgeRemoveBgTool,
   resolveImageTarget,
-  extractRemoveBgImage,
 } from '../src/webmcp/tools/mediaforge';
 import { normalizeServiceImage } from '../src/webmcp/tools/serviceBases';
 import { effectiveDoc } from '../src/state/doc';
@@ -136,17 +135,7 @@ describe('mediaforge-remove-bg — the cutout tool', () => {
     }
   });
 
-  it('extractRemoveBgImage handles the JSON and blob-ish shapes', () => {
-    expect(extractRemoveBgImage({ success: true, image: LONG_PNG_B64 })).toBe(
-      `data:image/png;base64,${LONG_PNG_B64}`,
-    );
-    expect(extractRemoveBgImage({ result: { image: LONG_PNG_B64 } })).toBe(
-      `data:image/png;base64,${LONG_PNG_B64}`,
-    );
-    expect(extractRemoveBgImage({ success: false, image: LONG_PNG_B64 })).toBeNull();
-  });
-
-  it('executes the cutout and REPLACES the target element src', async () => {
+  it('executes the THREE-HOP cutout flow (upload → remove_bg → fetch) and REPLACES the target element src', async () => {
     const store = createStudioStore();
     resetStudioStore();
     setStudioStore(store as never);
@@ -156,12 +145,47 @@ describe('mediaforge-remove-bg — the cutout tool', () => {
       src: `data:image/png;base64,${TINY_PNG_B64}`,
       x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 1,
     });
-    stubFetchJson({ success: true, image: `data:image/png;base64,${TINY_PNG_B64}cut` });
+    // The real media-forge contract (measured live 2026-08-31 via its
+    // OpenAPI + a round-trip): upload multipart → {id}, remove_bg {media_id}
+    // → {image: "/media/x.png"}, then GET the cutout bytes.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        const u = String(url);
+        calls.push(u);
+        if (u.includes('/api/upload')) {
+          return new Response(JSON.stringify({ ok: true, id: 25743 }), { status: 200 });
+        }
+        if (u.includes('/api/studio/remove_bg')) {
+          return new Response(
+            JSON.stringify({ ok: true, image: '/media/cutout.png', op: 'remove_bg', bg: 'transparent' }),
+            { status: 200 },
+          );
+        }
+        if (u.includes('/media/cutout.png')) {
+          return new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode('cutout-bytes'));
+                c.close();
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'image/png' } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: false }), { status: 404 });
+      }),
+    );
     const out = await mediaforgeRemoveBgTool.execute(
       { target: 'last-image' },
       { signal: new AbortController().signal },
     );
     expect(textOf(out)).toContain('"elementId"');
+    // All three hops in order.
+    expect(calls.some((u) => u.includes('/api/upload'))).toBe(true);
+    expect(calls.some((u) => u.includes('/api/studio/remove_bg'))).toBe(true);
+    expect(calls.some((u) => u.includes('/media/cutout.png'))).toBe(true);
     const state = store.getState();
     const doc = state.docs.find((d) => d.id === state.currentDocId)!;
     // The element is in the PENDING BATCH until approve — the effective doc
