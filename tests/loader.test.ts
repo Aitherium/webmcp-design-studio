@@ -11,6 +11,8 @@ import {
   TIER_A_MEMORY,
   TIER_B_MEMORY,
   detectTier,
+  loadPersistedConsent,
+  persistConsent,
   suggestBonsaiModelId,
   type TierProbeOverrides,
 } from '../src/agent/loader';
@@ -146,5 +148,34 @@ describe('suggestBonsaiModelId — errs small, never the 1.1 GB 8B by default', 
       configurable: true,
     });
     expect(suggestBonsaiModelId()).toBe('bonsai-1.7b');
+  });
+});
+
+/* ── consent persistence (the "preload the model" path) ────────────────────── */
+
+describe('consent persistence — a returning visitor must not start cold', () => {
+  it('persists a given consent so the next page load can preload', () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    persistConsent(true, storage);
+    expect(loadPersistedConsent(storage)).toBe(true);
+  });
+
+  it('a cleared consent is remembered as NOT given', () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    persistConsent(false, storage);
+    expect(loadPersistedConsent(storage)).toBe(false);
+  });
+
+  it('no storage at all is a safe false (private mode still works)', () => {
+    expect(loadPersistedConsent(undefined)).toBe(false);
+    expect(() => persistConsent(true, undefined)).not.toThrow();
   });
 });

@@ -361,9 +361,42 @@ export interface LoaderEvent {
   message?: string;
 }
 
+/** Consent is a one-time human decision, remembered across page loads — the
+ * consent CHIP still gates the very first use (nothing auto-loads before
+ * it), but a returning visitor must not start cold every reload (measured
+ * live 2026-08-30, owner: "it should still be faster once the model is
+ * downloaded and we preload the model quickly anyway" — the model was NOT
+ * preloaded and consent was NOT remembered, so every reload waited for a
+ * chip click + a full lazy load). */
+const CONSENT_KEY = 'webmcp-studio-consent-v1';
+
+function safeStorage(): Pick<Storage, 'getItem' | 'setItem'> | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function loadPersistedConsent(storage?: Pick<Storage, 'getItem'> | undefined): boolean {
+  try {
+    return storage?.getItem(CONSENT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function persistConsent(given: boolean, storage?: Pick<Storage, 'setItem'> | undefined): void {
+  try {
+    storage?.setItem(CONSENT_KEY, given ? '1' : '0');
+  } catch {
+    /* private mode / no storage — the session still works, it just re-asks */
+  }
+}
+
 export class AgentLoader {
   private verdict: TierVerdict | null = null;
-  private consentGiven = false;
+  private consentGiven = loadPersistedConsent(safeStorage());
   private slot: ModelKind | null = null;
   private chatWorker: ChatWorkerLike | null = null;
   private imageRuntime: ImageRuntimeLike | null = null;
@@ -413,9 +446,12 @@ export class AgentLoader {
     return this.consentGiven;
   }
 
-  /** The consent chip — the ONLY thing that may move the loader out of idle. */
+  /** The consent chip — the ONLY thing that may move the loader out of idle.
+   * The decision is persisted so a returning visitor's model can preload at
+   * boot (see the CONSENT_KEY note above). */
   setConsent(given: boolean): void {
     this.consentGiven = given;
+    persistConsent(given, safeStorage());
     this.emit({ type: 'consent' });
   }
 

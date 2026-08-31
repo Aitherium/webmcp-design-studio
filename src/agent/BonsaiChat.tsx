@@ -181,6 +181,14 @@ export function BonsaiChat() {
         tierReasons: v.reasons,
         phase: effective === 'C' ? 'unavailable' : 'idle',
       });
+      // PRELOAD for a returning visitor: consent was remembered, so start
+      // the model load immediately instead of waiting for the first turn —
+      // by the time they type, it is usually resident (owner 2026-08-30:
+      // "we preload the model quickly anyway"). The first-ever visitor still
+      // sees the consent chip; nothing loads before it.
+      if (agentLoader.isConsentGiven() && !hostedActive) {
+        void agentLoader.ensureModel('text', { modelId: suggestBonsaiModelId() });
+      }
     });
     if (forceHosted) {
       agentLoader.setHostedMode(true);
