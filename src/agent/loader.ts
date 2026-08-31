@@ -110,7 +110,14 @@ export function getBonsaiModel(id: string): ModelInfo | undefined {
 
 /**
  * Default model for this device — the suggestion, never a promise: the picker
- * always wins. Errs small (1.7B on weak links / low memory, 4B default).
+ * always wins. Errs small (1.7B on weak links / low memory, 4B default) — the
+ * 8B's ~1.1 GB load made the studio feel dramatically slower than
+ * aitherium.com, which runs the 236 MB 1.7B in the same browser (measured
+ * live 2026-08-30, owner: "it's faster at aitherium.com"). The old
+ * implementation returned the 8B to every machine with ≥8 GB device memory —
+ * i.e. every desktop — contradicting this docstring. The 8B stays in the
+ * picker for better reasoning; the few-shot example carries tool-chaining on
+ * the smaller sizes.
  */
 export function suggestBonsaiModelId(): string {
   if (typeof navigator === 'undefined') return 'bonsai-4b';
@@ -121,7 +128,7 @@ export function suggestBonsaiModelId(): string {
   if (nav.connection?.saveData) return 'bonsai-1.7b';
   if (nav.connection?.effectiveType && /2g/.test(nav.connection.effectiveType)) return 'bonsai-1.7b';
   const mem = nav.deviceMemory ?? 4;
-  if (mem >= 8) return 'bonsai-8b';
+  if (mem < 8) return 'bonsai-1.7b';
   return 'bonsai-4b';
 }
 

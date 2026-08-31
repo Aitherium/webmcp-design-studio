@@ -6,11 +6,12 @@
  * Tier B: WebGPU present (software rasteriser OK — text-only on-device).
  * Tier C: everything else (no GPU / low memory / saveData / probe failed).
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   TIER_A_MEMORY,
   TIER_B_MEMORY,
   detectTier,
+  suggestBonsaiModelId,
   type TierProbeOverrides,
 } from '../src/agent/loader';
 
@@ -110,5 +111,40 @@ describe('detectTier — gating tiers', () => {
     })) as typeof fetch });
     expect(v.tier).toBe('C');
     expect(v.probe.adapter).toBe(false);
+  });
+});
+
+/* ── the default model suggestion (errs small — the owner's speed complaint) ── */
+
+describe('suggestBonsaiModelId — errs small, never the 1.1 GB 8B by default', () => {
+  const origNav = globalThis.navigator;
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'navigator', { value: origNav, configurable: true });
+  });
+
+  const fakeNav = (deviceMemory?: number, saveData?: boolean, effectiveType?: string) =>
+    Object.defineProperty(
+      {},
+      'deviceMemory',
+      { value: deviceMemory, enumerable: true, configurable: true },
+    ) as Navigator & { deviceMemory?: number };
+
+  it('a desktop with ample memory gets the 4B (545 MB), NOT the 8B (1104 MB) — the 2026-08-30 measured regression', () => {
+    Object.defineProperty(globalThis, 'navigator', { value: fakeNav(32), configurable: true });
+    expect(suggestBonsaiModelId()).toBe('bonsai-4b');
+  });
+
+  it('a low-memory device gets the 1.7B (236 MB)', () => {
+    Object.defineProperty(globalThis, 'navigator', { value: fakeNav(4), configurable: true });
+    expect(suggestBonsaiModelId()).toBe('bonsai-1.7b');
+  });
+
+  it('saveData and 2g connections get the lightest model', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { connection: { saveData: true } },
+      configurable: true,
+    });
+    expect(suggestBonsaiModelId()).toBe('bonsai-1.7b');
   });
 });
