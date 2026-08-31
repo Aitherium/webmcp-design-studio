@@ -1968,9 +1968,17 @@ async function createBonsaiImageRuntime(init) {
         // 2026-08-30 on Tier A: "vae weights: 'bn.running_mean' has
         // unsupported dtype BF16" — a REAL inference tensor, not a counter).
         // BF16 is the top 16 bits of F32, so the conversion is a shift.
+        // FIX (2026-08-30, the "20% then nothing" wedge): the per-element
+        // form called bf16ToF32 — which ALLOCATES a Uint32Array +
+        // Float32Array PER ELEMENT. 168 MB of BF16 = 84M heap allocations
+        // on the MAIN thread with no progress event between tensors, so the
+        // UI froze at "vae decoder (20%)" for minutes and read as a hang
+        // (the fetch was never the stall — httpRangeFetcher has a watchdog).
+        // Bulk form: one typed-array shift per element, zero allocations.
         const out = new Float32Array(t.length / 2);
-        const dv = new DataView(raw.buffer, raw.byteOffset, t.length);
-        for (let i = 0; i < out.length; i++) out[i] = bf16ToF32(dv.getUint16(i * 2, true));
+        const src = new Uint16Array(raw.buffer, raw.byteOffset, t.length / 2);
+        const dst = new Uint32Array(out.buffer);
+        for (let i = 0; i < src.length; i++) dst[i] = src[i] << 16;
         preloaded.set(name, out);
       } else if (t.dtype === "I64" || t.dtype === "I32") {
         // Training-only counters (PyTorch BatchNorm's bn.num_batches_tracked

@@ -35,9 +35,19 @@ describe('webml-image.esm.js — VAE fetcher binding', () => {
     expect(bundle).toContain("'bn.num_batches_tracked'");
   });
 
-  it('converts BF16 tensors to F32 — BatchNorm running stats are BF16 in this VAE (bn.running_mean, live 08-30)', () => {
+  it('converts BF16 tensors with the BULK typed-array shift, not per-element allocation (the 2026-08-30 "20% then nothing" wedge)', () => {
     expect(bundle).toContain('t.dtype === "BF16"');
-    expect(bundle).toContain('bf16ToF32(dv.getUint16(i * 2, true))');
+    // The wedge: per-element bf16ToF32 allocated a Uint32Array + Float32Array
+    // PER ELEMENT — 84M heap allocations over the 168 MB VAE, on the main
+    // thread, with no progress event between tensors; the UI froze at
+    // "vae decoder (20%)" for minutes and read as a hang. The fetch was
+    // never the stall (httpRangeFetcher has a watchdog).
+    expect(bundle).not.toContain('bf16ToF32(dv.getUint16');
+    // The fix: BF16 is the top 16 bits of F32, so the bulk form is one
+    // typed-array shift per element with zero allocations.
+    expect(bundle).toContain('const src = new Uint16Array(raw.buffer, raw.byteOffset, t.length / 2)');
+    expect(bundle).toContain('const dst = new Uint32Array(out.buffer)');
+    expect(bundle).toContain('dst[i] = src[i] << 16');
     expect(bundle).toContain("'bn.running_mean'");
   });
 });
