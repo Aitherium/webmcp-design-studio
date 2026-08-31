@@ -38,7 +38,7 @@ import {
   saveProviderConfig,
   type ImageProviderConfig,
 } from '../cloud/imageProviders';
-import { createOpenAICompatibleWorker } from './hostedChat';
+import { createHostedChatWorker, createOpenAICompatibleWorker } from './hostedChat';
 import {
   loadTextAgentConfig,
   saveTextAgentConfig,

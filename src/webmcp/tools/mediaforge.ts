@@ -14,7 +14,7 @@
 import type { ToolDefinition } from '../types';
 import { ok, fail } from '../execute-io';
 import { getStudioStore } from '../../state/store';
-import { argString, ToolError, currentBatchSummary, snapshot } from './helpers';
+import { argString, ToolError, currentBatchSummary } from './helpers';
 import { withTimeout, withGenerationHeartbeat } from './image';
 import { MEDIAFORGE_BASE, normalizeServiceImage } from './serviceBases';
 import { makeThumbnail } from './thumbnail';

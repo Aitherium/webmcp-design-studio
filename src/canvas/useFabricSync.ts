@@ -109,23 +109,7 @@ function applyProps(obj: FabricObject, el: DesignElement, applying: { current: b
         scaleY: 1,
       });
     } else if (obj instanceof FabricImage) {
-      const currentSrc = obj.getSrc() as string;
-      if (el.src && el.src !== currentSrc) {
-        // A tool REPLACED the element's src (mediaforge-remove-bg cutout,
-        // 2026-08-31): fabric must reload the image — setSrc is async, and
-        // the scale must be recomputed against the NEW natural size once the
-        // image lands, or the cutout renders at the old image's scale.
-        obj.setSrc(el.src, () => {
-          obj.set({
-            scaleX: el.width / Math.max(obj.width, 1),
-            scaleY: el.height / Math.max(obj.height, 1),
-          });
-          obj.setCoords();
-          canvas.requestRenderAll();
-        });
-      } else {
-        obj.set({ scaleX: el.width / Math.max(obj.width, 1), scaleY: el.height / Math.max(obj.height, 1) });
-      }
+      obj.set({ scaleX: el.width / Math.max(obj.width, 1), scaleY: el.height / Math.max(obj.height, 1) });
     }
     obj.setCoords();
   } finally {
@@ -191,6 +175,25 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
         const obj = objects.get(el.id);
         if (obj) {
           applyProps(obj, el, applyingRef);
+          // A tool REPLACED the element's src (mediaforge-remove-bg cutout,
+          // 2026-08-31): fabric must reload the image. setSrc is async and
+          // takes (src, options, callback) — the scale must be recomputed
+          // against the NEW natural size once the image lands, or the cutout
+          // renders at the old image's scale. Lives HERE, not in applyProps:
+          // the canvas is in this closure's scope (applyProps is a
+          // module-level function — referencing canvas there was the CI
+          // TS2559/TS2552 failure, 2026-08-31).
+          if (obj instanceof FabricImage && el.src && el.src !== (obj.getSrc() as string)) {
+            const targetSrc = el.src;
+            obj.setSrc(targetSrc, {}, () => {
+              obj.set({
+                scaleX: el.width / Math.max(obj.width, 1),
+                scaleY: el.height / Math.max(obj.height, 1),
+              });
+              obj.setCoords();
+              canvas.requestRenderAll();
+            });
+          }
         } else {
           try {
             const created = await createFabricObject(el);
