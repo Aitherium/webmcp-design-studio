@@ -179,7 +179,7 @@ export function toolSpecsFromDefinitions(): ToolSpec[] {
     description: t.title ?? t.name,
     parameters: {
       type: 'object' as const,
-      properties: compactProperties(t.inputSchema.properties ?? ({} as Record<string, unknown>)),
+      properties: compactProperties((t.inputSchema.properties ?? {}) as Record<string, unknown>),
       required: t.inputSchema.required as string[] | undefined,
     },
   }));
