@@ -318,6 +318,13 @@ export const generateImageTool: ToolDefinition = {
       // burned the full timeout; attempt 2+ goes straight to the fleet lane).
       let result: { dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number };
       let usedDevice: 'local' | 'cloud';
+      // The auto chain's local failure is surfaced in the RESULT, never
+      // swallowed — measured live 2026-08-30 (owner: "still no image" while
+      // the trace showed device:'cloud'): when the hosted fallback succeeds,
+      // the reason the on-device lane failed was discarded, so the person
+      // could not see WHY (adapter boundary, timeout, runtime error) and the
+      // on-device lane read as a silent dead end instead of a diagnosable one.
+      let localErrorMessage: string | null = null;
       if (device === 'local') {
         result = await runLocal();
         usedDevice = 'local';
@@ -333,12 +340,13 @@ export const generateImageTool: ToolDefinition = {
           // Fall through to the hosted tier with a note — and remember the
           // strike so the next auto request does not gamble again.
           strikeLocalLane();
+          localErrorMessage = localErr instanceof Error ? localErr.message : String(localErr);
           try {
             result = await runHosted();
             usedDevice = 'cloud';
           } catch (hostedErr) {
             throw new ToolError(
-              `${localErr instanceof Error ? localErr.message : String(localErr)}; hosted fallback also failed: ${
+              `${localErrorMessage}; hosted fallback also failed: ${
                 hostedErr instanceof Error ? hostedErr.message : String(hostedErr)
               }`,
             );
@@ -377,6 +385,9 @@ export const generateImageTool: ToolDefinition = {
           elapsedMs: result.elapsedMs,
           seed: result.seed,
           thumbnail: result.thumbnail ?? null,
+          // Why the on-device lane did not produce this image (null when it
+          // did) — the reason is NEVER swallowed when the fallback succeeds.
+          localError: localErrorMessage,
           batchSummary: currentBatchSummary(),
         }),
       );

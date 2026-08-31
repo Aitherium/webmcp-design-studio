@@ -132,8 +132,20 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
     canvasRef.current = canvas;
     disposedRef.current = false;
 
-    const sync = async (): Promise<void> => {
-      if (disposedRef.current) return;
+    // The sync body is async (FabricImage.fromURL awaits the image decode) and
+    // the store subscribes fire on EVERY change — the token stream during a
+    // generation fires them constantly. Without serialization, two passes
+    // could interleave on a new image element: both see it missing from
+    // `objects`, both create a FabricImage, and the map overwrite leaves one
+    // object orphaned on the canvas at the wrong z-order (measured live
+    // 2026-08-30 while chasing "still no image": the element existed in the
+    // pending batch and the src decoded fine — the render path is where an
+    // interleaved pass could visibly misplace it). The queue makes passes
+    // strictly sequential: the second pass sees the object the first created.
+    let syncQueue: Promise<void> = Promise.resolve();
+    const sync = (): Promise<void> => {
+      syncQueue = syncQueue.then(async () => {
+        if (disposedRef.current) return;
       const state = getStudioStore().getState();
       const doc = state.docs.find((d) => d.id === state.currentDocId) ?? null;
       const eff = doc ? effectiveDoc(doc, state.pendingBatch) : null;
@@ -186,6 +198,8 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
       });
 
       canvas.requestRenderAll();
+      });
+      return syncQueue;
     };
 
     // Human edits → pending patches.
