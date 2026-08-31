@@ -68,11 +68,12 @@ const DESIGN_ONLY = [
 ];
 
 describe('ToolRegistry.reconcile', () => {
-  it('starts with the always-on tools only', async () => {
+  it('starts with every tool except approve-batch — an absent tool is a dead end the agent cannot see (2026-08-30: a fresh page registered 6 tools; the re-issue\'s get-design-state answered "not registered"). Call-time guards answer "no design exists" instead', async () => {
     const h = setup();
     await h.registry.reconcile(getStudioStore().getState());
     const names = await namesOf(h);
-    expect(names.sort()).toEqual([...ALWAYS_ON].sort());
+    expect(names.sort()).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].sort());
+    expect(names).not.toContain('approve-batch'); // the one deliberate gate — the toolchange demo
   });
 
   it('design tools appear once a design exists', async () => {
@@ -120,20 +121,21 @@ describe('ToolRegistry.reconcile', () => {
     expect(await namesOf(h)).toContain('approve-batch');
   });
 
-  it('an aborted tool re-registers when its predicate flips back', async () => {
+  it('approve-batch re-registers when a batch appears and disappears (the one deliberate gate)', async () => {
     const h = setup();
     const store = getStudioStore();
     await h.registry.reconcile(store.getState());
-    expect(await namesOf(h)).not.toContain('get-design-state');
+    expect(await namesOf(h)).not.toContain('approve-batch');
 
     store.getState().createDesign({ name: 'D', size: 'square' });
+    store.getState().addElement({ type: 'text', text: 'x', x: 0, y: 0, width: 10, height: 10 });
     await h.registry.reconcile(store.getState());
-    expect(await namesOf(h)).toContain('get-design-state');
+    expect(await namesOf(h)).toContain('approve-batch');
 
-    // No design any more (fresh store holds none) → abort → gone.
-    setStudioStore(createStudioStore());
+    // Batch committed → gone again (the toolchange demo).
+    store.getState().commitBatch();
     await h.registry.reconcile(getStudioStore().getState());
-    expect(await namesOf(h)).not.toContain('get-design-state');
+    expect(await namesOf(h)).not.toContain('approve-batch');
 
     // Design again → re-registered with a fresh controller.
     getStudioStore().getState().createDesign({ name: 'D2', size: 'square' });
@@ -141,11 +143,11 @@ describe('ToolRegistry.reconcile', () => {
     expect(await namesOf(h)).toContain('get-design-state');
   });
 
-  it('toolchange fires on every registration change (dynamic list updates)', async () => {
+  it('toolchange fires on every registration change (the approve-batch flip is the dynamic event)', async () => {
     const h = setup();
     const store = getStudioStore();
     await h.registry.reconcile(store.getState());
-    expect(h.toolLists.at(-1)).toHaveLength(ALWAYS_ON.length);
+    expect(h.toolLists.at(-1)).toHaveLength(ALWAYS_ON.length + DESIGN_ONLY.length);
 
     store.getState().createDesign({ name: 'F', size: 'poster' });
     await h.registry.reconcile(store.getState());
@@ -190,7 +192,7 @@ describe('ToolRegistry.reconcile', () => {
     expect(last.failures.length).toBeGreaterThan(0);
   });
 
-  it('reconcile with an empty store after a design keeps only always-on tools', async () => {
+  it('reconcile with an empty store after a design keeps every tool except approve-batch', async () => {
     const h = setup();
     const store = getStudioStore();
     store.getState().createDesign({ name: 'T', size: 'square' });
@@ -198,7 +200,7 @@ describe('ToolRegistry.reconcile', () => {
     expect(await namesOf(h)).toContain('add-text');
     await h.registry.reconcile(createStudioStore().getState());
     const names = await namesOf(h);
-    expect(names).toEqual([...ALWAYS_ON].sort());
+    expect(names).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].sort());
   });
 });
 

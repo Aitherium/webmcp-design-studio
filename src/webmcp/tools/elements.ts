@@ -36,7 +36,7 @@ export const addTextTool: ToolDefinition = {
     },
     required: ['text'],
   },
-  available: (s) => Boolean(s.currentDocId) && s.docs.length > 0,
+  available: () => true, // 2026-08-30: an absent tool is a dead end the agent cannot see — call-time guards answer "no design exists"
   async execute(args) {
     const { doc, pending } = snapshot();
     if (!doc) return fail('no design exists — create one with create-design first');
@@ -107,7 +107,7 @@ export const editElementTool: ToolDefinition = {
     },
     required: ['elementId'],
   },
-  available: (s) => Boolean(s.currentDocId) && s.docs.length > 0,
+  available: () => true, // 2026-08-30: an absent tool is a dead end the agent cannot see — call-time guards answer "no design exists"
   async execute(args) {
     const { doc, pending } = snapshot();
     if (!doc) return fail('no design exists — create one with create-design first');
@@ -168,7 +168,7 @@ export const removeElementTool: ToolDefinition = {
     },
     required: ['elementId'],
   },
-  available: (s) => Boolean(s.currentDocId) && s.docs.length > 0,
+  available: () => true, // 2026-08-30: an absent tool is a dead end the agent cannot see — call-time guards answer "no design exists"
   async execute(args) {
     const { doc, pending } = snapshot();
     if (!doc) return fail('no design exists — create one with create-design first');

@@ -115,10 +115,15 @@ export function parseToolCalls(text: string): { calls: ParsedToolCall[]; rest: s
   const calls: ParsedToolCall[] = [];
   let rest = text;
   // Well-formed pairs first; then a lone opening tag to end-of-text (truncated
-  // generations stop mid-call more often than they close the tag).
+  // generations stop mid-call more often than they close the tag); then a
+  // JSON body followed by a LONE CLOSING tag — measured live 2026-08-30, the
+  // 4B emitted `{json} </tool_call>` with NO opening tag on consecutive turns
+  // (first attempt AND the re-issue), which both prior patterns miss; the
+  // guard then reported "stopped without editing" over a well-formed call.
   const patterns = [
     /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g,
     /<tool_call>\s*(\{[\s\S]*\})\s*$/g,
+    /(\{[\s\S]*?\})\s*<\/tool_call>/g,
   ];
   for (const re of patterns) {
     rest = rest.replace(re, (whole, body: string) => {

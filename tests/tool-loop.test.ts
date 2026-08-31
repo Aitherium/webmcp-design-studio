@@ -384,3 +384,23 @@ describe('runToolLoop onToolResult — every executed call reports its outcome',
     expect(seen[0].response).toBe('executed create-design');
   });
 });
+
+/* ── the lone-CLOSING-tag malformation (the 4B's consistent shape, 2026-08-30) ── */
+
+describe('parseToolCalls — a JSON body followed by a LONE closing tag', () => {
+  it('recovers the 4B\'s exact shape: `{json} </tool_call>` with NO opening tag', () => {
+    const { calls, rest } = parseToolCalls(
+      '{"name": "create-design", "arguments": {"name": "Car Wash Poster", "size": "poster"}} </tool_call>',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('create-design');
+    expect(calls[0].arguments).toEqual({ name: 'Car Wash Poster', size: 'poster' });
+    expect(rest).toBe('');
+  });
+
+  it('leaves a malformed JSON with a lone closing tag visible (never fabricated)', () => {
+    const { calls, rest } = parseToolCalls('{"name": } </tool_call>');
+    expect(calls).toHaveLength(0);
+    expect(rest).toContain('tool_call');
+  });
+});
