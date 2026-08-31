@@ -13,6 +13,7 @@ import {
   parseToolCalls,
   renderToolsSystemBlock,
   runToolLoop,
+  toolSpecsFromDefinitions,
   withPriorToolResult,
   type ToolExecutor,
 } from '../src/agent/loop';
@@ -336,5 +337,28 @@ describe('withPriorToolResult — the next turn must see what the cap cut off', 
     const injected = out.slice('SYSTEM'.length);
     expect(injected.length).toBeLessThanOrEqual(800 + 200); // header text + capped payload
     expect(out).not.toContain('x'.repeat(900));
+  });
+});
+
+/* ── the prefill budget (the owner's "make prefill faster" ask) ────────────── */
+
+describe('the declared tools block stays COMPACT — the prefill budget', () => {
+  it('the <tools> block stays under 4,000 chars (~1,100 tokens): full descriptions were 7,708 chars ≈ 2,200 tokens, ~85% of a 2,576-token prefill re-paid on EVERY tool round (measured live 2026-08-30)', () => {
+    const block = renderToolsSystemBlock(toolSpecsFromDefinitions());
+    expect(block.length).toBeLessThan(4000);
+  });
+
+  it('enums survive the compaction — the model still picks valid values', () => {
+    const gen = toolSpecsFromDefinitions().find((s) => s.name === 'generate-image');
+    const props = gen?.parameters.properties as Record<string, unknown>;
+    expect((props.style as { enum?: unknown[] }).enum).toEqual([
+      'photographic', 'illustration', 'poster-art', 'neon',
+    ]);
+    expect((props.device as { enum?: unknown[] }).enum).toEqual(['auto', 'local', 'cloud']);
+  });
+
+  it('the description slot carries the short title, not the prose', () => {
+    const gen = toolSpecsFromDefinitions().find((s) => s.name === 'generate-image');
+    expect(gen?.description).toBe('Generate image');
   });
 });

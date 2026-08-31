@@ -163,17 +163,38 @@ function tryParseCallBody(body: string): { name: string; arguments: Record<strin
   return null;
 }
 
-/** Build the tool specs the loop declares — inputSchema is the same JSON Schema. */
+/**
+ * Build the tool specs the loop declares — COMPACT form: the model needs the
+ * names, arg names, types and enums, not the prose. The full descriptions
+ * made the <tools> block 7,708 chars ≈ 2,200 tokens — ~85% of a 2,576-token
+ * prefill, re-paid on EVERY tool round of every turn (measured live
+ * 2026-08-30; a 6-round turn prefilled ~15k tokens). The compact block keeps
+ * names/types/enums (so the model still picks valid values) and drops the
+ * descriptions — tool names carry the meaning. The WebMCP SURFACE path
+ * (getTools) is untouched and still serves the full schemas.
+ */
 export function toolSpecsFromDefinitions(): ToolSpec[] {
   return TOOL_DEFINITIONS.map((t) => ({
     name: t.name,
-    description: t.description,
+    description: t.title ?? t.name,
     parameters: {
       type: 'object' as const,
-      properties: (t.inputSchema.properties ?? {}) as Record<string, unknown>,
+      properties: compactProperties(t.inputSchema.properties ?? ({} as Record<string, unknown>)),
       required: t.inputSchema.required as string[] | undefined,
     },
   }));
+}
+
+function compactProperties(props: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(props)) {
+    const p = raw as { type?: string; enum?: unknown[] };
+    const c: Record<string, unknown> = {};
+    if (typeof p.type === 'string') c.type = p.type;
+    if (Array.isArray(p.enum)) c.enum = p.enum;
+    out[key] = c;
+  }
+  return out;
 }
 
 /* ── execution through the REAL WebMCP API ────────────────────────────────── */
