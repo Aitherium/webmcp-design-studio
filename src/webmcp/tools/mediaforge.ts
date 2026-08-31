@@ -136,12 +136,16 @@ export const mediaforgeRemoveBgTool: ToolDefinition = {
 };
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error('could not read the cutout response'));
-    reader.readAsDataURL(blob);
-  });
+  // Chunked btoa — FileReader.readAsDataURL is broken in some jsdom/CI
+  // environments ("Failed to execute 'readAsDataURL'", CI node 22 2026-08-31)
+  // and the chunked path avoids the call-stack limit on large images anyway.
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type || 'image/png'};base64,${btoa(bin)}`;
 }
 
 export const MEDIAFORGE_TOOLS: ToolDefinition[] = [mediaforgeRemoveBgTool];
