@@ -10,6 +10,7 @@ import {
   MAX_TOOL_ROUNDS,
   applyFinalAnswer,
   createToolExecutor,
+  isTruncatedToolCall,
   parseToolCalls,
   renderToolsSystemBlock,
   runToolLoop,
@@ -403,6 +404,20 @@ describe('parseToolCalls — a JSON body followed by a LONE closing tag', () => 
     expect(calls).toHaveLength(0);
     expect(rest).toContain('tool_call');
   });
+
+  it('recovers a STUTTERED extra trailing brace before the lone closing tag (the live 2026-08-30 stop: "it stopped" on the third call)', () => {
+    // The 4B emitted `...120}}}` — THREE closing braces — then ` </tool_call>`.
+    // Pattern 3 matched, but the captured body failed every repair (no
+    // trailing-brace strip existed), so the call stayed unparsed text and the
+    // turn ended with the raw JSON as the final bubble.
+    const { calls, rest } = parseToolCalls(
+      '{"name": "add-text", "arguments": {"text": "Fast & Affordable Car Washes", "fontSize": 60, "bold": false, "align": "center", "x": 540, "y": 120}}} </tool_call>',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('add-text');
+    expect(calls[0].arguments).toMatchObject({ text: 'Fast & Affordable Car Washes', x: 540, y: 120 });
+    expect(rest).toBe('');
+  });
 });
 
 /* ── the tagless bare-JSON shape (the 4B's mid-turn drift, 2026-08-30) ─────── */
@@ -423,5 +438,69 @@ describe('parseToolCalls — a bare {json} with NO tags (or followed by prose)',
     const { calls } = parseToolCalls('{"name":"generate-image","arguments":{"prompt":"hero shot"}}');
     expect(calls).toHaveLength(1);
     expect(calls[0].name).toBe('generate-image');
+  });
+});
+
+/* ── the truncated-call continuation (the live 2026-08-30 "it stopped" shape) ── */
+
+describe('isTruncatedToolCall — unbalanced JSON with a tool signature', () => {
+  it('flags the live shape: generate-image cut mid-argument at "de', () => {
+    expect(
+      isTruncatedToolCall(
+        '{"name": "generate-image", "arguments": {"prompt": "hero shot of a fresh car being washed", "style": "photographic", "size": "tall", "de',
+      ),
+    ).toBe(true);
+  });
+
+  it('flags an opening <tool_call> tag with no close', () => {
+    expect(isTruncatedToolCall('<tool_call>{"name": "add-text", "arguments": {"text": "hel')).toBe(true);
+  });
+
+  it('ignores prose ending in an unbalanced brace (not a tool call)', () => {
+    expect(isTruncatedToolCall('Sounds good, the design is set {so')).toBe(false);
+    expect(isTruncatedToolCall('Here is your poster.')).toBe(false);
+  });
+
+  it('ignores a BALANCED call (closed — no continuation needed)', () => {
+    expect(isTruncatedToolCall('<tool_call>{"name": "add-text", "arguments": {}}</tool_call>')).toBe(false);
+  });
+});
+
+describe('runToolLoop — the truncated-call continuation round', () => {
+  it('recovers a call cut mid-JSON with ONE continuation round, then executes it (the live 2026-08-30 stop)', async () => {
+    const worker = fakeWorker([
+      {
+        text: '{"name": "generate-image", "arguments": {"prompt": "hero shot of a fresh car being washed", "style": "photographic", "size": "tall", "de',
+      },
+      {
+        text: '<tool_call>{"name": "generate-image", "arguments": {"prompt": "hero shot of a fresh car being washed", "style": "photographic", "size": "tall"}}</tool_call>',
+      },
+      { text: 'Done — the image is in the design.' },
+    ]);
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const result = await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'poster for a car wash',
+      executor: recordingExecutor(calls),
+    });
+    expect(calls).toEqual([
+      { name: 'generate-image', args: expect.objectContaining({ style: 'photographic', size: 'tall' }) },
+    ]);
+    expect(result.rounds).toBe(3);
+    expect(result.text).toContain('Done');
+  });
+
+  it('does NOT fire the continuation for prose ending in an unbalanced brace', async () => {
+    const worker = fakeWorker([{ text: 'Sounds good, the design is set {so' }]);
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const result = await runToolLoop({
+      worker,
+      systemPrompt: 'sys',
+      userMessage: 'hi',
+      executor: recordingExecutor(calls),
+    });
+    expect(calls).toHaveLength(0);
+    expect(result.rounds).toBe(1);
   });
 });

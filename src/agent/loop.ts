@@ -50,6 +50,25 @@ export function shouldReissueForEmptyDesign(
   return attempt === 0 && !designChanged && isDirective(userMessage);
 }
 
+/**
+ * A truncated tool call: the generation ends with JSON braces UNBALANCED
+ * (more `{` than `}`) AND a tool signature (`<tool_call>` or a `"name":`
+ * key). Measured live 2026-08-30: the 4B's generate-image call was cut
+ * mid-argument — `{"name":"generate-image","arguments":{"prompt":"hero
+ * shot…","style":"photographic","size":"tall","de` — at the end of its
+ * generation budget, so no parse pattern (all need a closed `}`) could
+ * recover it and the turn died with the raw JSON as the final bubble. Prose
+ * ending with an unbalanced brace (e.g. "{so") is not a tool call and never
+ * triggers the continuation.
+ */
+export function isTruncatedToolCall(text: string): boolean {
+  const open = (text.match(/\{/g) ?? []).length;
+  const close = (text.match(/\}/g) ?? []).length;
+  if (open <= close) return false;
+  if (/<tool_call>/i.test(text)) return true;
+  return /"name"\s*:/.test(text);
+}
+
 /** Short affirmatives answer the agent's own permission question — the exact
  * moment the guard exists for (the agent asked "want me to add text?", the
  * person says "yes", and the model still must not get away with replying).
@@ -159,6 +178,17 @@ function tryParseCallBody(body: string): { name: string; arguments: Record<strin
     body.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1'),
     body.replace(/<\/?tool_call>/g, '').replace(/,\s*([}\]])/g, '$1').trim(),
     body.replace(/<\/?tool_call>/g, '').replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1').trim(),
+    // Brace stutter: the 4B sometimes emits an EXTRA trailing brace before the
+    // lone closing tag — `...120}}}` instead of `...120}}` (measured live
+    // 2026-08-30, the third call of a turn: pattern 3 matched `{json}
+    // </tool_call>` but the captured body carried THREE closing braces, every
+    // repair failed, the call stayed unparsed text, and the turn ended with
+    // the raw JSON as the final bubble — "it stopped" with a garbage answer).
+    // Stripping ONE trailing brace fixes the exact shape; the chain only
+    // reaches these after the raw body failed, so a valid body is never
+    // damaged. The second variant covers a double stutter (four braces).
+    body.replace(/}$/, ''),
+    body.replace(/}{2}$/, ''),
   ];
   for (const c of candidates) {
     try {
@@ -364,11 +394,28 @@ export async function runToolLoop(opts: LoopOptions): Promise<LoopResult> {
   const allCalls: ParsedToolCall[] = [];
   let exhausted = false;
   let lastToolResponse: string | null = null;
+  let truncatedRecovered = false;
 
   for (let round = 0; round < maxRounds; round++) {
     const text = await generateOnce(opts, messages);
     const { calls, rest } = parseToolCalls(text);
     if (calls.length === 0) {
+      // A generation cut off mid-tool-call: the call has no closing `}`, so
+      // every parse pattern misses it and the turn would die with the raw
+      // JSON as the final bubble (measured live 2026-08-30: generate-image
+      // cut at `"size":"tall","de` — the 4B's generation budget ended
+      // mid-arguments). ONE continuation round asks the model to complete the
+      // call it was making; the completed call then executes normally.
+      if (!truncatedRecovered && isTruncatedToolCall(text)) {
+        truncatedRecovered = true;
+        messages.push({ role: 'assistant', content: text });
+        messages.push({
+          role: 'user',
+          content:
+            'You were cut off mid-tool-call. Continue and output ONLY the complete <tool_call> JSON — nothing else, no prose.',
+        });
+        continue;
+      }
       return { text, rounds: round + 1, toolCalls: allCalls, exhausted: false, lastToolResponse };
     }
 
