@@ -76,6 +76,26 @@ Then reply with ONE short summary sentence: what you made and that it awaits the
  * re-issues this hard instruction when a directive turn ends with the design
  * still empty.
  */
+/** One-click demo prompts for the WebMCP Challenge — each exercises the full
+ * co-creation loop: tool calls, the uncommitted batch, the human approve. */
+const STARTERS: Array<{ label: string; prompt: string }> = [
+  {
+    label: 'Yard sale flyer',
+    prompt:
+      'Make a yard sale flyer, spring theme, white background — headline, details and a photo. Then stop and wait for approval.',
+  },
+  {
+    label: 'Car wash poster',
+    prompt:
+      'Make a poster for a car wash business — neon theme, big headline, and a hero image of a clean shiny car. Then stop and wait for approval.',
+  },
+  {
+    label: 'Café menu board',
+    prompt:
+      'Make a chalkboard-style café menu with today specials — bold title, three items, a shape or image. Then stop and wait for approval.',
+  },
+];
+
 const FINISH_JOB_PROMPT = `The user asked you to make a design, and you responded without adding anything to the canvas. Finish the job NOW, in this turn:
 - If a design already exists, work on IT (call get-design-state first). Do NOT create a new design.
 - Add the headline, subtext and any other elements the request implies (hours, phone, location).
@@ -514,6 +534,25 @@ export function BonsaiChat() {
                       turn itself — the person can SEE what is working
                       (their 2026-08-30 ask). */}
                   {agent.progressDetail ?? (liveTokens > 0 ? `generating… ${liveTokens} tokens` : 'thinking…')}
+                </div>
+              )}
+
+              {/* Starter prompts — the judge-mode turnkey entry (WebMCP
+                  Challenge 2026): a fresh session with a one-click demo of
+                  the co-creation loop. The agent drafts, the human approves.
+                  Shown only while the transcript is empty. */}
+              {bubbles.length === 0 && !busy && (
+                <div className="agent-starters" role="status" aria-label="starter prompts">
+                  <span className="agent-starters-label">Try:</span>
+                  {STARTERS.map((s) => (
+                    <button
+                      key={s.label}
+                      className="chip chip-starter"
+                      onClick={() => void runTurn(s.prompt, { enforce: true })}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
                 </div>
               )}
 

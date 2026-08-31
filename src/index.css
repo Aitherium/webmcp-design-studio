@@ -205,6 +205,28 @@
   border-color: var(--danger);
 }
 
+.agent-starters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.agent-starters-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.chip-starter {
+  background: transparent;
+  color: var(--accent, #2ad7d7);
+  border: 1px solid var(--border);
+  font-size: 13px;
+}
+
 /* ── StatusBar ──────────────────────────────────────────── */
 
 .statusbar {
