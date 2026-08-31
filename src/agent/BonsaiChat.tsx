@@ -172,10 +172,13 @@ export function BonsaiChat() {
       saveTextAgentConfig(next);
       return next;
     });
-  // Custom mode never touches the loader: the visitor's own key is their own
-  // consent, so the loader gate must not block the input.
+  // Custom and fleet modes never touch the loader: the visitor's own key (or
+  // the fleet brain) is their own consent, so the loader gate must not block
+  // the input. Fleet is the PUBLIC-ORIGIN default (instant first visit) —
+  // measured 2026-08-31: the on-device default made a judge's first demo wait
+  // for the 4B download.
   useEffect(() => {
-    if (textAgent.mode === 'custom') {
+    if (textAgent.mode === 'custom' || textAgent.mode === 'fleet') {
       setAgent({ consent: true, phase: 'idle', lastError: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -307,6 +310,13 @@ export function BonsaiChat() {
             model: textAgent.model.trim() || 'gpt-4o-mini',
             apiKey: textAgent.apiKey.trim() || undefined,
           });
+        } else if (textAgent.mode === 'fleet') {
+          // The fleet lane works on EVERY tier — getChatWorker() only returns
+          // the hosted worker when the loader's hostedMode is on (Tier C /
+          // ?hosted=1), so routing through the loader would hand a Tier A/B
+          // machine the on-device worker while the panel says "Fleet".
+          // Measured 2026-08-31 while wiring the public-origin default.
+          w = createHostedChatWorker();
         } else {
           const worker = agentLoader.getChatWorker();
           if (!worker) {

@@ -33,7 +33,17 @@ export function loadTextAgentConfig(): TextAgentConfig {
   } catch {
     /* corrupt storage — default */
   }
-  return { mode: 'on-device', baseUrl: '', apiKey: '', model: '' };
+  // Default: on the PUBLIC origins the FLEET brain is the first-visit default
+  // — instant, no model download, no consent chip; a judge lands and clicks a
+  // starter chip (measured 2026-08-31: the on-device default made the first
+  // demo wait minutes for the 4B). On-device stays the default everywhere
+  // else (localhost dev, private deployments) where speed of first use is not
+  // the demo. A stored choice always wins over the default.
+  const isPublicOrigin =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'studio.aitherium.com' ||
+      window.location.hostname === 'studio-preview.aitherium.com');
+  return { mode: isPublicOrigin ? 'fleet' : 'on-device', baseUrl: '', apiKey: '', model: '' };
 }
 
 export function saveTextAgentConfig(cfg: TextAgentConfig): void {
