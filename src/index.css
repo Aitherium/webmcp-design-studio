@@ -524,6 +524,13 @@
   margin: 4px 0 0;
   font-family: ui-monospace, monospace;
 }
+.agent-livestatus {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  font-family: ui-monospace, monospace;
+  min-height: 14px;
+}
 
 .agent-transcript {
   display: flex;

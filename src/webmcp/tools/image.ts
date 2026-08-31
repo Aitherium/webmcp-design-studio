@@ -102,6 +102,36 @@ export function resolveHostedBase(config: { id: string; baseUrl?: string }): str
   return null;
 }
 
+/**
+ * Live "it's alive" heartbeat during generation — the runtime emits NO
+ * progress while the diffusion/VAE cooks (measured live 2026-08-30: the
+ * panel showed nothing for minutes after generate-image; the only visible
+ * progress was the VAE weight LOAD, not the generation). Ticks
+ * agent.progressDetail every 2s so the person sees elapsed seconds and the
+ * lane name; cleared when the generation settles either way.
+ */
+function withGenerationHeartbeat(label: string, fn: () => Promise<unknown>): Promise<unknown> {
+  const store = getStudioStore().getState();
+  const t0 = Date.now();
+  const id = window.setInterval(() => {
+    store.setAgent({ progressDetail: `${label}… (${Math.round((Date.now() - t0) / 1000)}s)` });
+  }, 2000);
+  const done = () => {
+    window.clearInterval(id);
+    store.setAgent({ progressDetail: null });
+  };
+  return fn().then(
+    (v) => {
+      done();
+      return v;
+    },
+    (err) => {
+      done();
+      throw err;
+    },
+  );
+}
+
 export const generateImageTool: ToolDefinition = {
   name: 'generate-image',
   title: 'Generate image',
@@ -155,19 +185,21 @@ export const generateImageTool: ToolDefinition = {
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
         try {
-          return await local.generate({
-            prompt,
-            // The on-device runtime caps at 1024px per axis (webml-image.esm.js:
-            // "sizes above 1024px are not supported on-device" — measured live
-            // 2026-08-30: the scripted plan's 'tall' 768×1280 was rejected and
-            // the whole turn fell to hosted). fitOnDeviceDims scales to fit,
-            // preserving the aspect; the element placement below uses the
-            // ACTUAL generated dims so the canvas box is not stretched.
-            width: localDims.width,
-            height: localDims.height,
-            seed: actualSeed,
-            style,
-          });
+          return (await withGenerationHeartbeat('generating image on-device', () =>
+            local.generate({
+              prompt,
+              // The on-device runtime caps at 1024px per axis (webml-image.esm.js:
+              // "sizes above 1024px are not supported on-device" — measured live
+              // 2026-08-30: the scripted plan's 'tall' 768×1280 was rejected and
+              // the whole turn fell to hosted). fitOnDeviceDims scales to fit,
+              // preserving the aspect; the element placement below uses the
+              // ACTUAL generated dims so the canvas box is not stretched.
+              width: localDims.width,
+              height: localDims.height,
+              seed: actualSeed,
+              style,
+            }),
+          )) as { dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number };
         } catch (err) {
           throw new ToolError(`local image generation failed: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -202,11 +234,13 @@ export const generateImageTool: ToolDefinition = {
         // the window). 1024² is the model's native size and stays well under
         // the edge. The design stays tall; the canvas fit handles the aspect.
         const attempt = (): Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }> =>
-          syncGenerateImage(
-            url,
-            { prompt, width: localDims.width, height: localDims.height, seed: actualSeed },
-            { apiKey: config.apiKey, signal },
-          );
+          withGenerationHeartbeat('generating image on the fleet', () =>
+            syncGenerateImage(
+              url,
+              { prompt, width: localDims.width, height: localDims.height, seed: actualSeed },
+              { apiKey: config.apiKey, signal },
+            ),
+          ) as Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }>;
         try {
           return await attempt();
         } catch (err) {

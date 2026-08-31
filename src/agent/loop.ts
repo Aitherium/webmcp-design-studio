@@ -247,6 +247,22 @@ function webmcpSurface(): ModelContextSurface | null {
 
 /* ── the loop ─────────────────────────────────────────────────────────────── */
 
+/**
+ * Carry the previous turn's cut-off tool result into the next turn's system
+ * prompt. Each runToolLoop call starts a FRESH context ([system, user]) — a
+ * turn that exhausted at the round cap has its last tool response (e.g. a
+ * generate-image outcome) fed to NO further generation, so the human's
+ * "continue" would re-run state discovery from zero, blind to what already
+ * happened and re-issuing the same call into the same wall (measured live
+ * 2026-08-30: exhausted turns re-chained list-designs → get-design-state →
+ * generate-image on every retry). Injected ONCE into the next turn, then
+ * cleared — the cap bubble tells the human, this tells the model.
+ */
+export function withPriorToolResult(systemPrompt: string, lastToolResponse: string | null): string {
+  if (!lastToolResponse) return systemPrompt;
+  return `${systemPrompt}\n\n[Context from your previous turn: the tool-round cap cut you off before you saw this tool result: ${lastToolResponse.slice(0, 800)}]`;
+}
+
 export interface LoopCallbacks {
   /** Streamed answer tokens as they arrive (channel 'answer'). */
   onToken?: (text: string) => void;

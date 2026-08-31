@@ -28,6 +28,7 @@ import {
   runToolLoop,
   shouldReissueForEmptyDesign,
   toolSpecsFromDefinitions,
+  withPriorToolResult,
   type ParsedToolCall,
 } from './loop';
 import {
@@ -112,6 +113,14 @@ export function BonsaiChat() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** True while the latest output is streaming into an agent bubble (no final push). */
   const agentStreamingRef = useRef(false);
+  /** The last turn's cut-off tool result, injected ONCE into the next turn's
+   * system prompt (withPriorToolResult) so a human's "continue" is not blind
+   * to what the cap hid from the model (measured live 2026-08-30: every
+   * retry re-ran state discovery into the same wall). */
+  const lastExhaustedRef = useRef<string | null>(null);
+  /** Throttled live token counter — the "generating… (N tokens)" status line. */
+  const [liveTokens, setLiveTokens] = useState(0);
+  const tokRef = useRef(0);
   /**
    * The hosted lane (2026-08-28): the tunnel host proxies the fleet's
    * llama.cpp brain at same-origin /api/chat/ — that only exists on
@@ -212,6 +221,8 @@ export function BonsaiChat() {
   const runTurn = async (userMessage: string, opts?: { enforce?: boolean }) => {
     setBusy(true);
     agentStreamingRef.current = false;
+    tokRef.current = 0;
+    setLiveTokens(0);
     setAgent({ phase: 'generating', lastError: null });
 
     try {
@@ -241,9 +252,16 @@ export function BonsaiChat() {
           setAgent({ modelId: chosenModel ?? defaultModel });
         }
         const w = agentLoader.getChatWorker()!;
+        // The previous exhausted turn's cut-off tool result enters this turn's
+        // context ONCE (then cleared) — "continue" must not re-run blind.
+        const priorResult = lastExhaustedRef.current;
+        lastExhaustedRef.current = null;
         const result = await runToolLoop({
           worker: w,
-          systemPrompt: STUDIO_SYSTEM + '\n\n' + renderToolsSystemBlock(toolSpecsFromDefinitions()),
+          systemPrompt:
+            withPriorToolResult(STUDIO_SYSTEM, priorResult) +
+            '\n\n' +
+            renderToolsSystemBlock(toolSpecsFromDefinitions()),
           userMessage: message,
           executor,
           // Headroom on EVERY attempt, not just the re-issue — measured live
@@ -259,16 +277,26 @@ export function BonsaiChat() {
           // protection stays.
           maxTokens: 2048,
           maxRounds: 6,
-          onToken: (tok) => {
+          onToken: (_tok) => {
             // The streamed deltas are a PREVIEW and can carry partial-token
             // artifacts — measured live 2026-08-29, the on-device 8B doubled
             // every word ("TheThe design design for for your your…") while the
             // worker's assembled final text was clean. They are NEVER painted
             // into the transcript; the assembled result.text below is the only
             // agent prose that shows. This ref only tracks that something
-            // streamed (distinguishes a tool-only turn from a prose turn).
+            // streamed (distinguishes a tool-only turn from a prose turn) and
+            // throttles a LIVE token counter into the status line so the
+            // person can see the model working (their 2026-08-30 ask).
             agentStreamingRef.current = true;
-            void tok;
+            tokRef.current += 1;
+            if (tokRef.current === 1 || tokRef.current % 16 === 0) setLiveTokens(tokRef.current);
+          },
+          onToolResult: (call, response) => {
+            // The human asked to see tool RESULTS, not just the call row —
+            // the outcome (ok/fail + cause) goes to the transcript so a
+            // failed generate-image names its lane instead of vanishing.
+            const { innerText } = unwrapToolResponse(response);
+            push({ role: 'tool', text: `${call.name} → ${(innerText || response).slice(0, 240)}` });
           },
         });
         // The only agent prose the transcript ever shows is the loop's
@@ -283,7 +311,9 @@ export function BonsaiChat() {
           // outcome so a failed generate-image shows its cause instead of
           // vanishing (measured live 2026-08-30: the cap fired right after
           // generate-image and the transcript showed the call but never the
-          // result).
+          // result). The same response is injected into the NEXT turn's
+          // context (withPriorToolResult) so "continue" is not blind to it.
+          lastExhaustedRef.current = result.lastToolResponse;
           const lastOutcome = result.lastToolResponse
             ? ` Last tool result: ${unwrapToolResponse(result.lastToolResponse).innerText.slice(0, 400)}`
             : '';
@@ -467,6 +497,17 @@ export function BonsaiChat() {
                   </div>
                 )}
               </div>
+
+              {busy && (
+                <div className="agent-livestatus" role="status" aria-live="polite">
+                  {/* The loader's progress (model download) and the image
+                      tool's generation heartbeat both land in
+                      agent.progressDetail; the token counter covers the LLM
+                      turn itself — the person can SEE what is working
+                      (their 2026-08-30 ask). */}
+                  {agent.progressDetail ?? (liveTokens > 0 ? `generating… ${liveTokens} tokens` : 'thinking…')}
+                </div>
+              )}
 
               <div className="agent-inputrow">
                 <input

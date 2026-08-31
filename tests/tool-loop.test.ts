@@ -13,6 +13,7 @@ import {
   parseToolCalls,
   renderToolsSystemBlock,
   runToolLoop,
+  withPriorToolResult,
   type ToolExecutor,
 } from '../src/agent/loop';
 import type { ChatWorkerLike, WorkerResponse } from '../src/agent/loader';
@@ -310,5 +311,30 @@ describe('applyFinalAnswer — streamed deltas are a preview, the assembled text
   it('never replaces with an empty final text', () => {
     const bubbles = [{ role: 'agent', text: 'streamed preview' }];
     expect(applyFinalAnswer(bubbles, '   ')).toBe(bubbles);
+  });
+});
+
+/* ── prior-context injection (the "ask me to continue" continuation) ───────── */
+
+describe('withPriorToolResult — the next turn must see what the cap cut off', () => {
+  it('returns the prompt unchanged when there is no prior result', () => {
+    const p = 'SYSTEM';
+    expect(withPriorToolResult(p, null)).toBe(p);
+    expect(withPriorToolResult(p, '')).toBe(p);
+  });
+
+  it('injects the cut-off tool result as context for the next turn', () => {
+    const out = withPriorToolResult('SYSTEM', '{"ok":true,"elementId":"el_abc"}');
+    expect(out).toContain('SYSTEM');
+    expect(out).toContain('el_abc');
+    expect(out).toContain('tool-round cap cut you off');
+  });
+
+  it('caps the injected result at 800 chars (a data-URL image payload must not flood the context)', () => {
+    const huge = 'x'.repeat(5000);
+    const out = withPriorToolResult('SYSTEM', huge);
+    const injected = out.slice('SYSTEM'.length);
+    expect(injected.length).toBeLessThanOrEqual(800 + 200); // header text + capped payload
+    expect(out).not.toContain('x'.repeat(900));
   });
 });
