@@ -20,8 +20,19 @@
  */
 import type { ChatWorkerLike, WorkerRequest, WorkerResponse } from './loader';
 
-/** Same-origin on the tunnel host; override per build with VITE_HOSTED_BASE. */
-const HOSTED_BASE = (import.meta.env?.VITE_HOSTED_BASE as string | undefined) ?? '/api/chat';
+/**
+ * Same-origin on the tunnel host; override per build with VITE_HOSTED_BASE.
+ * On the PUBLIC origin (studio.aitherium.com is GitHub Pages — static, no
+ * /api/chat/ of its own) the fleet lane is reached CROSS-ORIGIN through the
+ * tunnel host's nginx proxy, which now answers CORS for this origin
+ * (measured live 2026-08-30: completion 200 in 10s with
+ * access-control-allow-origin: https://studio.aitherium.com).
+ */
+const HOSTED_BASE =
+  (import.meta.env?.VITE_HOSTED_BASE as string | undefined) ??
+  (typeof window !== 'undefined' && window.location.hostname === 'studio.aitherium.com'
+    ? 'https://studio-preview.aitherium.com/api/chat'
+    : '/api/chat');
 const HOSTED_MODEL = 'bonsai-27b';
 
 function wireMessages(messages: WorkerRequest & { type: 'generate' }) {

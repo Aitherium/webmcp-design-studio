@@ -122,17 +122,17 @@ export function BonsaiChat() {
   const [liveTokens, setLiveTokens] = useState(0);
   const tokRef = useRef(0);
   /**
-   * The hosted lane (2026-08-28): the tunnel host proxies the fleet's
-   * llama.cpp brain at same-origin /api/chat/ — that only exists on
-   * studio-preview, so a GitHub-Pages origin (the judges' URL) cannot host it
-   * and keeps the honest Tier C dead-end. `?hosted=1` forces the lane
-   * anywhere (dev server, preview, a machine whose WebGPU load keeps failing).
+   * The hosted lane (2026-08-28, extended 2026-08-30): the tunnel host proxies
+   * the fleet's llama.cpp brain at /api/chat/ — same-origin on
+   * studio-preview, and now CORS-reachable from the PUBLIC origin too
+   * (hostedChat.ts HOSTED_BASE points at the preview's proxy there; nginx
+   * answers Access-Control-Allow-Origin for it, verified live 2026-08-30).
+   * Only the raw github.io origin stays a dead end (no tunnel). `?hosted=1`
+   * forces the lane anywhere.
    */
   const forceHosted = new URLSearchParams(window.location.search).has('hosted');
   const hostedLaneAvailable =
-    forceHosted ||
-    (!window.location.hostname.endsWith('github.io') &&
-      window.location.hostname !== 'studio.aitherium.com');
+    forceHosted || !window.location.hostname.endsWith('github.io');
   /** Image backend chosen in the provider panel (persisted to localStorage). */
   const [provider, setProvider] = useState<ImageProviderConfig>(() => loadProviderConfig());
 
