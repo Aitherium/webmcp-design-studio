@@ -157,7 +157,7 @@ export function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>):
  * agent.progressDetail every 2s so the person sees elapsed seconds and the
  * lane name; cleared when the generation settles either way.
  */
-function withGenerationHeartbeat(label: string, fn: () => Promise<unknown>): Promise<unknown> {
+export function withGenerationHeartbeat(label: string, fn: () => Promise<unknown>): Promise<unknown> {
   const store = getStudioStore().getState();
   const t0 = Date.now();
   const id = window.setInterval(() => {

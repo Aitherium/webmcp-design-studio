@@ -56,6 +56,10 @@ const ALWAYS_ON = [
   'remember-preference',
   'undo',
   'generate-image',
+  // The IRIS + Media-Forge service tools (2026-08-31, the WebMCP demo):
+  // always registered, call-time guards answer "no design exists".
+  'iris-generate',
+  'mediaforge-remove-bg',
 ];
 const DESIGN_ONLY = [
   'add-text',

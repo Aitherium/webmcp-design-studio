@@ -102,6 +102,11 @@ const STARTERS: Array<{ label: string; prompt: string }> = [
     prompt:
       'Make a chalkboard-style café menu with today specials — bold title, three items, a shape or image. Then stop and wait for approval.',
   },
+  {
+    label: 'Iris hero cutout',
+    prompt:
+      'Make a poster for a specialty coffee brand. Use iris-generate for a hero image of a coffee cup, then mediaforge-remove-bg on it so the cup becomes a transparent cutout, then add a headline and tagline. Then stop and wait for approval.',
+  },
 ];
 
 const FINISH_JOB_PROMPT = `The user asked you to make a design, and you responded without adding anything to the canvas. Finish the job NOW, in this turn:

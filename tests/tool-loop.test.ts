@@ -344,9 +344,9 @@ describe('withPriorToolResult — the next turn must see what the cap cut off', 
 /* ── the prefill budget (the owner's "make prefill faster" ask) ────────────── */
 
 describe('the declared tools block stays COMPACT — the prefill budget', () => {
-  it('the <tools> block stays under 4,000 chars (~1,100 tokens): full descriptions were 7,708 chars ≈ 2,200 tokens, ~85% of a 2,576-token prefill re-paid on EVERY tool round (measured live 2026-08-30)', () => {
+  it('the <tools> block stays under 4,300 chars: full descriptions were 7,708 chars ≈ 2,200 tokens, ~85% of a 2,576-token prefill re-paid on EVERY tool round (measured live 2026-08-30). The pin moved 4,000 → 4,300 when iris-generate + mediaforge-remove-bg joined (2026-08-31): 4,113 chars ≈ 1,080 tokens — the two service tools cost ~30 tokens, the compact-form rule is unchanged', () => {
     const block = renderToolsSystemBlock(toolSpecsFromDefinitions());
-    expect(block.length).toBeLessThan(4000);
+    expect(block.length).toBeLessThan(4300);
   });
 
   it('enums survive the compaction — the model still picks valid values', () => {

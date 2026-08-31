@@ -11,6 +11,8 @@ import type { StudioStateLike, ToolDefinition } from '../types';
 import { DESIGN_TOOLS } from './designs';
 import { ELEMENT_TOOLS } from './elements';
 import { IMAGE_TOOLS } from './image';
+import { IRIS_TOOLS } from './iris';
+import { MEDIAFORGE_TOOLS } from './mediaforge';
 import { STYLE_TOOLS } from './style';
 import { BATCH_TOOLS } from './batch';
 import { EXPORT_TOOLS } from './export';
@@ -27,6 +29,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // Available only while a design exists.
   ...ELEMENT_TOOLS, // add-text, edit-element, remove-element
   ...IMAGE_TOOLS, // generate-image
+  ...IRIS_TOOLS, // iris-generate — the autonomous pipeline
+  ...MEDIAFORGE_TOOLS, // mediaforge-remove-bg — the cutout
   ...STYLE_TOOLS, // restyle-design
   ...EXPORT_TOOLS, // export-design
 ];
