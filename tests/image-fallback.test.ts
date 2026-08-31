@@ -10,7 +10,7 @@
  * unconditionally. An explicit 'custom' without a URL stays a loud error.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveHostedBase } from '../src/webmcp/tools/image';
+import { resolveHostedBase, withTimeout } from '../src/webmcp/tools/image';
 
 describe('resolveHostedBase — the D-2291 fleet fallback (corrected)', () => {
   it('falls through to the fleet lane for a panel on-device choice (the live Tier B/C dead end)', () => {
@@ -30,5 +30,20 @@ describe('resolveHostedBase — the D-2291 fleet fallback (corrected)', () => {
   it('still errors LOUD for a custom choice with no URL (the user named a backend and did not configure it)', () => {
     expect(resolveHostedBase({ id: 'custom', baseUrl: '' })).toBeNull();
     expect(resolveHostedBase({ id: 'custom' })).toBeNull();
+  });
+});
+
+/* ── the local-lane timeout (a hang must fall through, not stall forever) ──── */
+
+describe('withTimeout — the wedged-on-device fall-through', () => {
+  it('rejects when the local generate never settles (the 2026-08-30 15-minute stall)', async () => {
+    const never = () => new Promise<never>(() => {});
+    await expect(withTimeout(60, 'on-device image generation', never)).rejects.toThrow(
+      /timed out after/,
+    );
+  }, 5000);
+
+  it('resolves when the promise settles first', async () => {
+    await expect(withTimeout(5000, 'x', () => Promise.resolve('img'))).resolves.toBe('img');
   });
 });

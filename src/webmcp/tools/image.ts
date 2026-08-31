@@ -102,6 +102,32 @@ export function resolveHostedBase(config: { id: string; baseUrl?: string }): str
   return null;
 }
 
+/** A wedged on-device generate must fall through to the hosted lane — a HANG
+ * is not an error and never fires the fallback chain (measured live
+ * 2026-08-30: generate-image ran 15+ minutes with zero progress on the
+ * owner's machine; the WebGPU runtime loaded its VAE and then never settled,
+ * every attempt of the day included). The timeout converts the hang into a
+ * ToolError; the auto chain then tries the hosted lane. The abandoned
+ * promise is inert — its eventual resolution is no-op'd by the settled race
+ * and the heartbeat's clear is idempotent. */
+const LOCAL_GENERATE_TIMEOUT_MS = 120_000;
+
+export function withTimeout<T>(ms: number, label: string, fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = window.setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    fn().then(
+      (v) => {
+        window.clearTimeout(id);
+        resolve(v);
+      },
+      (e) => {
+        window.clearTimeout(id);
+        reject(e);
+      },
+    );
+  });
+}
+
 /**
  * Live "it's alive" heartbeat during generation — the runtime emits NO
  * progress while the diffusion/VAE cooks (measured live 2026-08-30: the
@@ -185,20 +211,25 @@ export const generateImageTool: ToolDefinition = {
         }
         const actualSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
         try {
-          return (await withGenerationHeartbeat('generating image on-device', () =>
-            local.generate({
-              prompt,
-              // The on-device runtime caps at 1024px per axis (webml-image.esm.js:
-              // "sizes above 1024px are not supported on-device" — measured live
-              // 2026-08-30: the scripted plan's 'tall' 768×1280 was rejected and
-              // the whole turn fell to hosted). fitOnDeviceDims scales to fit,
-              // preserving the aspect; the element placement below uses the
-              // ACTUAL generated dims so the canvas box is not stretched.
-              width: localDims.width,
-              height: localDims.height,
-              seed: actualSeed,
-              style,
-            }),
+          return (await withTimeout(
+            LOCAL_GENERATE_TIMEOUT_MS,
+            'on-device image generation',
+            () =>
+              withGenerationHeartbeat('generating image on-device', () =>
+                local.generate({
+                  prompt,
+                  // The on-device runtime caps at 1024px per axis (webml-image.esm.js:
+                  // "sizes above 1024px are not supported on-device" — measured live
+                  // 2026-08-30: the scripted plan's 'tall' 768×1280 was rejected and
+                  // the whole turn fell to hosted). fitOnDeviceDims scales to fit,
+                  // preserving the aspect; the element placement below uses the
+                  // ACTUAL generated dims so the canvas box is not stretched.
+                  width: localDims.width,
+                  height: localDims.height,
+                  seed: actualSeed,
+                  style,
+                }),
+              ),
           )) as { dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number };
         } catch (err) {
           throw new ToolError(`local image generation failed: ${err instanceof Error ? err.message : String(err)}`);
