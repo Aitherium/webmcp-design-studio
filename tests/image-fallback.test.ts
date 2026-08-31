@@ -10,7 +10,13 @@
  * unconditionally. An explicit 'custom' without a URL stays a loud error.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveHostedBase, withTimeout } from '../src/webmcp/tools/image';
+import {
+  clearLocalLaneStrike,
+  isLocalLaneStruck,
+  resolveHostedBase,
+  strikeLocalLane,
+  withTimeout,
+} from '../src/webmcp/tools/image';
 
 describe('resolveHostedBase — the D-2291 fleet fallback (corrected)', () => {
   it('falls through to the fleet lane for a panel on-device choice (the live Tier B/C dead end)', () => {
@@ -45,5 +51,18 @@ describe('withTimeout — the wedged-on-device fall-through', () => {
 
   it('resolves when the promise settles first', async () => {
     await expect(withTimeout(5000, 'x', () => Promise.resolve('img'))).resolves.toBe('img');
+  });
+});
+
+/* ── the session circuit breaker (the 2026-08-30 wedge: attempt 2+ skips local) ── */
+
+describe('the local-lane circuit breaker — once struck, auto goes straight to hosted', () => {
+  it('a struck local lane is skipped by the auto chain', () => {
+    // The breaker is a pure module-level flag with exported accessors — the
+    // execute-chain wiring is UI-level, but the flag contract is pinned here.
+    strikeLocalLane();
+    expect(isLocalLaneStruck()).toBe(true);
+    clearLocalLaneStrike();
+    expect(isLocalLaneStruck()).toBe(false);
   });
 });

@@ -72,6 +72,27 @@ export function getLocalImageGenerator(): LocalImageGenerator | null {
 }
 
 /**
+ * Session circuit breaker for the on-device lane. Measured live 2026-08-30:
+ * the WebGPU runtime loaded its VAE and then NEVER settled — every attempt of
+ * the day froze (the "20% then nothing" signature), each burning the full
+ * timeout before the fleet fallback. Once the local lane strikes out, the
+ * auto chain skips it for the REST of the session and goes straight to
+ * hosted — the second request gets an image in ~40s, not another 2-minute
+ * gamble. Resets on a successful local generation (a lane that can recover
+ * recovers).
+ */
+let localLaneStruck = false;
+export function isLocalLaneStruck(): boolean {
+  return localLaneStruck;
+}
+export function strikeLocalLane(): void {
+  localLaneStruck = true;
+}
+export function clearLocalLaneStrike(): void {
+  localLaneStruck = false;
+}
+
+/**
  * Resolve the cloud base URL from the provider panel:
  *   fleet  → the studio's own nginx proxy (same-origin, no CORS)
  *   custom → the user-named base URL (required; a missing one is a loud error)
@@ -291,7 +312,10 @@ export const generateImageTool: ToolDefinition = {
         }
       };
 
-      // The chain: local → hosted → loud failure.
+      // The chain: local → hosted → loud failure. The auto arm SKIPS local
+      // once it has struck out this session (the measured 2026-08-30 wedge:
+      // the WebGPU runtime loads its VAE then never settles — every attempt
+      // burned the full timeout; attempt 2+ goes straight to the fleet lane).
       let result: { dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number };
       let usedDevice: 'local' | 'cloud';
       if (device === 'local') {
@@ -300,12 +324,15 @@ export const generateImageTool: ToolDefinition = {
       } else if (device === 'cloud') {
         result = await runHosted();
         usedDevice = 'cloud';
-      } else if (local) {
+      } else if (local && !isLocalLaneStruck()) {
         try {
           result = await runLocal();
           usedDevice = 'local';
-          } catch (localErr) {
-          // Fall through to the hosted tier with a note.
+          clearLocalLaneStrike(); // a lane that CAN recover recovers
+        } catch (localErr) {
+          // Fall through to the hosted tier with a note — and remember the
+          // strike so the next auto request does not gamble again.
+          strikeLocalLane();
           try {
             result = await runHosted();
             usedDevice = 'cloud';

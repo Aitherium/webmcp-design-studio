@@ -120,10 +120,17 @@ export function parseToolCalls(text: string): { calls: ParsedToolCall[]; rest: s
   // 4B emitted `{json} </tool_call>` with NO opening tag on consecutive turns
   // (first attempt AND the re-issue), which both prior patterns miss; the
   // guard then reported "stopped without editing" over a well-formed call.
+  // LAST: a bare `{json}` anywhere — the 4B also drops the tags entirely
+  // (measured live 2026-08-30, third round of the same turn: create-design
+  // and add-text parsed and executed, then the model emitted the next
+  // add-text with no tag at all and the turn died). Greedy to the LAST `}` so
+  // prose after the call stays in the transcript; a prose JSON that parses to
+  // a call shape is the accepted cost of leniency (the parse is validated).
   const patterns = [
     /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g,
     /<tool_call>\s*(\{[\s\S]*\})\s*$/g,
     /(\{[\s\S]*?\})\s*<\/tool_call>/g,
+    /(\{[\s\S]*\})/g,
   ];
   for (const re of patterns) {
     rest = rest.replace(re, (whole, body: string) => {

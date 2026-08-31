@@ -404,3 +404,24 @@ describe('parseToolCalls — a JSON body followed by a LONE closing tag', () => 
     expect(rest).toContain('tool_call');
   });
 });
+
+/* ── the tagless bare-JSON shape (the 4B's mid-turn drift, 2026-08-30) ─────── */
+
+describe('parseToolCalls — a bare {json} with NO tags (or followed by prose)', () => {
+  it('recovers the exact shape that killed the turn: bare JSON, no tags, prose after', () => {
+    const { calls, rest } = parseToolCalls(
+      '{"name": "add-text", "arguments": {"text": "Fresh car washes every day!", "fontSize": 54}} Here is the summary of what I did.',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('add-text');
+    expect(calls[0].arguments.text).toBe('Fresh car washes every day!');
+    // The prose survives in the transcript.
+    expect(rest).toContain('Here is the summary');
+  });
+
+  it('recovers bare JSON at end-of-text with no tags at all', () => {
+    const { calls } = parseToolCalls('{"name":"generate-image","arguments":{"prompt":"hero shot"}}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('generate-image');
+  });
+});

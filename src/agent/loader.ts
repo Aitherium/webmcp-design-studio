@@ -718,12 +718,31 @@ export class AgentLoader {
 
     try {
       const mod = this.runtimeModules?.image ?? ((await import(/* @vite-ignore */ WEBML_IMAGE_URL)) as WebMLRuntimeModule);
-      const rt = await mod.createBonsaiImageRuntime({
-        weightsUrl: IMAGE_WEIGHTS_URL,
-        vaeWeightsUrl: VAE_WEIGHTS_URL,
-        onProgress: (p) =>
-          this.emit({ type: 'progress', kind: 'image', progress: p.percent, detail: p.detail }),
-      });
+      // The image LOAD has no natural bound — measured live 2026-08-30: the
+      // runtime's VAE load froze at ~20% and the createBonsaiImageRuntime
+      // promise never settled, so ensureModel hung and the tool's own
+      // timeout burned the full 120s before the fleet fallback. Bound it
+      // here (60s is generous for a ~300 MB VAE) so a stuck load fails FAST
+      // and the generate-image chain falls to hosted immediately.
+      const rt = await Promise.race([
+        mod.createBonsaiImageRuntime({
+          weightsUrl: IMAGE_WEIGHTS_URL,
+          vaeWeightsUrl: VAE_WEIGHTS_URL,
+          onProgress: (p) =>
+            this.emit({ type: 'progress', kind: 'image', progress: p.percent, detail: p.detail }),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'on-device image runtime load timed out after 60s — the VAE weights likely stalled mid-load (measured live 2026-08-30: froze at ~20%); the hosted lane is used instead',
+                ),
+              ),
+            60_000,
+          ),
+        ),
+      ]);
       this.imageRuntime = rt;
       this.slot = 'image';
       this.emit({ type: 'slot', kind: 'image' });
