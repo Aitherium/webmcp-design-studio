@@ -176,23 +176,25 @@ export function useFabricSync(canvasElRef: RefObject<HTMLCanvasElement | null>):
         if (obj) {
           applyProps(obj, el, applyingRef);
           // A tool REPLACED the element's src (mediaforge-remove-bg cutout,
-          // 2026-08-31): fabric must reload the image. setSrc is async and
-          // takes (src, options, callback) — the scale must be recomputed
-          // against the NEW natural size once the image lands, or the cutout
-          // renders at the old image's scale. Lives HERE, not in applyProps:
-          // the canvas is in this closure's scope (applyProps is a
+          // 2026-08-31): fabric must reload the image. The first version used
+          // setSrc with a callback — this fabric's typings take (src, options)
+          // only (CI TS2554), and the scale must be recomputed against the NEW
+          // natural size anyway. Cleaner: swap in a fresh FabricImage through
+          // the same createFabricObject path as a new element (it awaits
+          // fromURL and applies the el width/height scale). Lives HERE, not in
+          // applyProps: the canvas is in this closure's scope (applyProps is a
           // module-level function — referencing canvas there was the CI
           // TS2559/TS2552 failure, 2026-08-31).
           if (obj instanceof FabricImage && el.src && el.src !== (obj.getSrc() as string)) {
-            const targetSrc = el.src;
-            obj.setSrc(targetSrc, {}, () => {
-              obj.set({
-                scaleX: el.width / Math.max(obj.width, 1),
-                scaleY: el.height / Math.max(obj.height, 1),
-              });
-              obj.setCoords();
-              canvas.requestRenderAll();
-            });
+            try {
+              const replacement = await createFabricObject(el);
+              if (disposedRef.current) return;
+              canvas.remove(obj);
+              objects.set(el.id, replacement);
+              canvas.add(replacement);
+            } catch (err) {
+              console.error('[fabric-sync] image reload failed', el.id, err);
+            }
           }
         } else {
           try {
