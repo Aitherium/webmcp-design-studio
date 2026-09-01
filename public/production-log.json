@@ -1,7 +1,7 @@
 {
   "studio": "WebMCP Design Studio",
   "lane": "mediaforge",
-  "updated": "2026-09-01T03:10:56.755238+00:00",
+  "updated": "2026-09-01T04:06:23.021632+00:00",
   "entries": [
     {
       "run": "2026-08-31T00:00:00Z",
@@ -209,7 +209,8 @@
           "ok": true,
           "images": 1,
           "error": null,
-          "duration_ms": 26880
+          "duration_ms": 26880,
+          "removed_by_safety": true
         },
         {
           "id": "cassian",
@@ -217,12 +218,21 @@
           "ok": true,
           "images": 1,
           "error": null,
-          "duration_ms": 29027
+          "duration_ms": 29027,
+          "removed_by_safety": true
         }
       ],
-      "produced": 3,
+      "produced": 1,
       "errors": [],
-      "wedge_refused": false
+      "wedge_refused": false,
+      "safety": {
+        "removed": [
+          "verity",
+          "cassian"
+        ],
+        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
+      },
+      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
     },
     {
       "run": "2026-09-01T03:10:05.499029+00:00",
@@ -233,12 +243,108 @@
           "ok": true,
           "images": 1,
           "error": null,
-          "duration_ms": 51254
+          "duration_ms": 51254,
+          "removed_by_safety": true
         }
       ],
-      "produced": 1,
+      "produced": 0,
       "errors": [],
-      "wedge_refused": false
+      "wedge_refused": false,
+      "safety": {
+        "removed": [
+          "moika"
+        ],
+        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
+      },
+      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
+    },
+    {
+      "run": "2026-09-01T03:14:25.893435+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 31692
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 27927,
+          "removed_by_safety": true
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 30128
+        },
+        {
+          "id": "naomi",
+          "name": "Naomi Kai",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 31310,
+          "removed_by_safety": true
+        },
+        {
+          "id": "the-warden",
+          "name": "The Warden",
+          "ok": false,
+          "images": 0,
+          "error": "media-forge unreachable: ",
+          "duration_ms": 1683
+        }
+      ],
+      "produced": 2,
+      "errors": [
+        "media-forge unreachable: "
+      ],
+      "wedge_refused": false,
+      "safety": {
+        "removed": [
+          "verity",
+          "naomi"
+        ],
+        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
+      },
+      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
+    },
+    {
+      "run": "2026-09-01T03:19:45.111489+00:00",
+      "characters": [
+        {
+          "id": "the-warden",
+          "name": "The Warden",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 20632,
+          "removed_by_safety": true
+        }
+      ],
+      "produced": 0,
+      "errors": [],
+      "wedge_refused": false,
+      "safety": {
+        "removed": [
+          "the-warden"
+        ],
+        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
+      },
+      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
     }
-  ]
+  ],
+  "safety": {
+    "screen": "gemma4-12b on DGX (192.168.1.112:8124)",
+    "deployed": "2026-09-01"
+  }
 }
