@@ -31,7 +31,8 @@ export function FabricCanvas() {
           <div className="canvas-empty" role="status">
             <span className="canvas-empty-title">No design yet</span>
             <span className="canvas-empty-sub">
-              Ask the agent for a poster, flyer or story and it will create the design here.
+              Ask the agent for a poster, flyer or story — or tap a starter prompt in the rail — and
+              every edit waits for your Approve.
             </span>
           </div>
         )}
