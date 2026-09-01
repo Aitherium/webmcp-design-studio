@@ -1,7 +1,7 @@
 {
   "studio": "WebMCP Design Studio",
   "lane": "mediaforge",
-  "updated": "2026-09-01T02:53:36.913713+00:00",
+  "updated": "2026-09-01T03:10:56.755238+00:00",
   "entries": [
     {
       "run": "2026-08-31T00:00:00Z",
@@ -221,6 +221,22 @@
         }
       ],
       "produced": 3,
+      "errors": [],
+      "wedge_refused": false
+    },
+    {
+      "run": "2026-09-01T03:10:05.499029+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 51254
+        }
+      ],
+      "produced": 1,
       "errors": [],
       "wedge_refused": false
     }
