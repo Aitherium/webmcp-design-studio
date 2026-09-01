@@ -1,15 +1,227 @@
 {
   "studio": "WebMCP Design Studio",
   "lane": "mediaforge",
-  "updated": "2026-08-31T18:00:00Z",
+  "updated": "2026-09-01T02:53:36.913713+00:00",
   "entries": [
     {
       "run": "2026-08-31T00:00:00Z",
       "produced": 0,
       "characters": [],
       "errors": [
-        "day zero: pipeline repaired — SAM2 error path fixed, queue-wedge gate added; production runs begin 2026-09-01 02:23"
+        "day zero: pipeline repaired \u2014 SAM2 error path fixed, queue-wedge gate added; production runs begin 2026-09-01 02:23"
       ],
+      "wedge_refused": false
+    },
+    {
+      "run": "2026-09-01T02:00:45.040934+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": false,
+          "images": 0,
+          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+          "duration_ms": 645
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": false,
+          "images": 0,
+          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+          "duration_ms": 520
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 6 job(s), 6 error(s) (2 in the last hour), 0 running",
+          "duration_ms": 264
+        }
+      ],
+      "produced": 0,
+      "errors": [
+        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+        "refusing recipe submission \u2014 media-forge queue wedged: 6 job(s), 6 error(s) (2 in the last hour), 0 running"
+      ],
+      "wedge_refused": true
+    },
+    {
+      "run": "2026-09-01T02:16:26.291930+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": false,
+          "images": 0,
+          "error": "NameError: name 'SAM2_MODEL' is not defined",
+          "duration_ms": 169903
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": false,
+          "images": 0,
+          "error": "NameError: name 'SAM2_MODEL' is not defined",
+          "duration_ms": 48033
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
+          "duration_ms": 261
+        }
+      ],
+      "produced": 0,
+      "errors": [
+        "NameError: name 'SAM2_MODEL' is not defined",
+        "NameError: name 'SAM2_MODEL' is not defined",
+        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running"
+      ],
+      "wedge_refused": true
+    },
+    {
+      "run": "2026-09-01T02:26:18.282684+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": false,
+          "images": 0,
+          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+          "duration_ms": 622
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": false,
+          "images": 0,
+          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+          "duration_ms": 525
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": false,
+          "images": 0,
+          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+          "duration_ms": 525
+        }
+      ],
+      "produced": 0,
+      "errors": [
+        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
+        "ComfyUI VN module not found \u2014 set aitheros_root in Settings."
+      ],
+      "wedge_refused": false
+    },
+    {
+      "run": "2026-09-01T02:29:53.133261+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": false,
+          "images": 0,
+          "error": "no usable subject cutouts",
+          "duration_ms": 80261
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
+          "duration_ms": 265
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
+          "duration_ms": 265
+        }
+      ],
+      "produced": 0,
+      "errors": [
+        "no usable subject cutouts",
+        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
+        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running"
+      ],
+      "wedge_refused": true
+    },
+    {
+      "run": "2026-09-01T02:43:17.062347+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
+          "duration_ms": 305
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
+          "duration_ms": 263
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": false,
+          "images": 0,
+          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
+          "duration_ms": 266
+        }
+      ],
+      "produced": 0,
+      "errors": [
+        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
+        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
+        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running"
+      ],
+      "wedge_refused": true
+    },
+    {
+      "run": "2026-09-01T02:51:48.516894+00:00",
+      "characters": [
+        {
+          "id": "moika",
+          "name": "Moika",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 52486
+        },
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 26880
+        },
+        {
+          "id": "cassian",
+          "name": "Cassian",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 29027
+        }
+      ],
+      "produced": 3,
+      "errors": [],
       "wedge_refused": false
     }
   ]
