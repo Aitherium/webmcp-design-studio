@@ -92,6 +92,9 @@ export async function runJudgeScript(options?: {
   });
   await run('approve batch', 'approve-batch', {});
   await run('export design', 'export-design', { format: 'png', scale: 1 });
+  // P1.3: undo is available while a batch pends OR the design has committed
+  // versions (canUndo) — the "realized the mistake" beat works right after
+  // the commit, which is its natural moment.
   await run('undo last commit', 'undo', {});
   await run('remember preference', 'remember-preference', {
     key: 'brand_color',

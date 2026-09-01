@@ -63,6 +63,10 @@ export interface StudioState {
   docs: DesignDoc[];
   currentDocId: string | null;
   pendingBatch: PendingBatch | null;
+  /** P1.3 (2026-08-31): the undo tool's availability. True while a batch is
+   * pending OR the current design has committed versions to roll back —
+   * exposed as a field because the version stacks are a closure, not state. */
+  canUndo: boolean;
 
   /** Live tool names read from the WebMCP surface (toolchange UI). */
   liveToolNames: string[];
@@ -166,6 +170,8 @@ export const createStudioStore = () => {
       docs: persisted?.docs ?? [],
       currentDocId: persisted?.currentDocId ?? null,
       pendingBatch: persisted?.pendingBatch ?? null,
+      // Version stacks are never persisted — a reload can't undo.
+      canUndo: false,
       liveToolNames: [],
       webmcpStatus: null,
       runtimeStatus: null,
@@ -188,6 +194,7 @@ export const createStudioStore = () => {
           currentDocId: doc.id,
           // A fresh design starts clean; any in-flight batch is dropped.
           pendingBatch: null,
+          canUndo: false,
         }));
         return doc;
       },
@@ -196,12 +203,16 @@ export const createStudioStore = () => {
         const doc = currentDoc(get());
         if (!doc) return null;
         const copy = cloneDesignDoc(doc, name);
-        set((s) => ({ docs: [...s.docs, copy], currentDocId: copy.id, pendingBatch: null }));
+        set((s) => ({ docs: [...s.docs, copy], currentDocId: copy.id, pendingBatch: null, canUndo: false }));
         return copy;
       },
 
       switchDesign(docId) {
-        set((s) => ({ currentDocId: s.docs.some((d) => d.id === docId) ? docId : s.currentDocId }));
+        const next = get().docs.some((d) => d.id === docId) ? docId : get().currentDocId;
+        set(() => ({
+          currentDocId: next,
+          canUndo: next ? (versions[next] ?? []).length > 0 : false,
+        }));
       },
 
       commitBatch() {
@@ -217,6 +228,7 @@ export const createStudioStore = () => {
         set((cur) => ({
           docs: cur.docs.map((d) => (d.id === doc.id ? committed : d)),
           pendingBatch: null,
+          canUndo: (versions[doc.id] ?? []).length > 0,
         }));
         return committed;
       },
@@ -239,6 +251,7 @@ export const createStudioStore = () => {
         set((cur) => ({
           docs: cur.docs.map((d) => (d.id === doc.id ? prev : d)),
           pendingBatch: null,
+          canUndo: (versions[doc.id] ?? []).length > 0,
         }));
         return n;
       },

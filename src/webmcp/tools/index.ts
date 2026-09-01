@@ -3,9 +3,12 @@
  * availability predicate. `ToolRegistry.reconcile()` walks this list after
  * every store change and registers/unregisters on the WebMCP surface.
  *
- * Registration order tells the demo story: the agent starts with 5 always-on
- * tools, creating a design unlocks 8 more, and approve-batch exists ONLY
- * while a batch is pending — it vanishes the moment the human approves.
+ * Registration order tells the demo story: 14 tools are live at boot, and
+ * the CONSENT PAIR (approve-batch + undo, P1.3) exists ONLY while a batch
+ * is pending — both vanish the moment the human approves, and `toolchange`
+ * fires as they appear and disappear. Design-scoped tools stay permanently
+ * registered (2026-08-30 lesson: an absent tool is a dead end the agent
+ * cannot see); call-time guards answer "no design exists".
  */
 import type { StudioStateLike, ToolDefinition } from '../types';
 import { DESIGN_TOOLS } from './designs';

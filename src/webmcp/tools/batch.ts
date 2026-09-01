@@ -40,6 +40,15 @@ export const undoTool: ToolDefinition = {
     },
     required: [],
   },
+  // P1.3 (2026-08-31): the consent pair is the dynamic-registration story —
+  // undo appears WITH approve-batch when a batch pends, and STAYS while the
+  // design has committed versions to roll back (undo's own semantics: it
+  // rolls back COMMITS and refuses while a batch pends — a strict pair-gate
+  // made it available-but-always-refusing). approve-batch is the tool that
+  // vanishes on commit; undo is the safety net. The toolchange beat fires on
+  // the batch flip for both. Design-scoped tools stay permanently registered
+  // (2026-08-30 lesson: an absent tool is a dead end the agent cannot see).
+  available: (s) => Boolean(s.pendingBatch) || Boolean(s.canUndo),
   async execute(args) {
     const { doc } = snapshot();
     if (!doc) return fail('no design exists to undo');

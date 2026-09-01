@@ -75,6 +75,9 @@ export interface StudioStateLike {
   docs: readonly DesignDoc[];
   currentDocId: string | null;
   pendingBatch: PendingBatch | null;
+  /** P1.3: true while the current design has committed versions to roll
+   * back (the version stacks are a store closure, so this is exposed). */
+  canUndo: boolean;
 }
 
 /** The runtime surface we register against. The real browser API satisfies

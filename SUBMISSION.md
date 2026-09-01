@@ -29,11 +29,12 @@ Two details make it genuine leverage rather than a demo stub:
 
 1. **The human is a first-class tool.** Every agent edit lands as an *uncommitted
    batch*, and committing is itself a WebMCP tool — and **the consent boundary is part
-   of the protocol surface itself**: `approve-batch` and `undo` *exist only while a
-   batch is pending*. A WebMCP `toolchange` event fires as they appear and vanish, so
-   any browser agent can see the moment the human's consent is required. The agent's
-   last step is a request for human approval — the collaboration is part of the
-   protocol, not an afterthought.
+   of the protocol surface itself**: `approve-batch` *exists only while a batch is
+   pending*, and `undo` appears with it and stays while there is a committed version
+   to roll back (the safety net). A WebMCP `toolchange` event fires as they appear and
+   vanish, so any browser agent can see the moment the human's consent is required.
+   The agent's last step is a request for human approval — the collaboration is part
+   of the protocol, not an afterthought.
 2. **The studio's own in-page agent speaks the same protocol.** The built-in agent
    (WebGPU on-device, or the platform fleet, or the visitor's own OpenAI-compatible
    endpoint) drives the studio through the very same

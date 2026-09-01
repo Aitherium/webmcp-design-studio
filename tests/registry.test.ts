@@ -72,12 +72,15 @@ const DESIGN_ONLY = [
 ];
 
 describe('ToolRegistry.reconcile', () => {
-  it('starts with every tool except approve-batch — an absent tool is a dead end the agent cannot see (2026-08-30: a fresh page registered 6 tools; the re-issue\'s get-design-state answered "not registered"). Call-time guards answer "no design exists" instead', async () => {
+  it('starts with every tool except the consent pair — an absent tool is a dead end the agent cannot see (2026-08-30: a fresh page registered 6 tools; the re-issue\'s get-design-state answered "not registered"). Call-time guards answer "no design exists" instead', async () => {
     const h = setup();
     await h.registry.reconcile(getStudioStore().getState());
     const names = await namesOf(h);
-    expect(names.sort()).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].sort());
-    expect(names).not.toContain('approve-batch'); // the one deliberate gate — the toolchange demo
+    // P1.3: undo joined approve-batch as the pending-only pair — the dynamic
+    // toolchange story is the consent boundary, and it fires for BOTH tools.
+    expect(names.sort()).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].filter((n) => n !== 'undo').sort());
+    expect(names).not.toContain('approve-batch'); // the consent pair — the toolchange demo
+    expect(names).not.toContain('undo');
   });
 
   it('design tools appear once a design exists', async () => {
@@ -88,24 +91,29 @@ describe('ToolRegistry.reconcile', () => {
     await h.registry.reconcile(store.getState());
     const names = await namesOf(h);
     expect(names).toEqual(expect.arrayContaining(DESIGN_ONLY));
-    expect(names).toEqual(expect.arrayContaining(ALWAYS_ON));
+    expect(names).toEqual(expect.arrayContaining(ALWAYS_ON.filter((n) => n !== 'undo')));
     expect(names).not.toContain('approve-batch');
   });
 
-  it('approve-batch appears only while pending and disappears after commit', async () => {
+  it('the consent pair appears with a pending batch; approve-batch vanishes on commit while undo stays as the safety net (P1.3)', async () => {
     const h = setup();
     const store = getStudioStore();
     store.getState().createDesign({ name: 'Flyer', size: 'square' });
     await h.registry.reconcile(store.getState());
     expect(await namesOf(h)).not.toContain('approve-batch');
+    expect(await namesOf(h)).not.toContain('undo');
 
     store.getState().addElement({ type: 'text', text: 'hi', x: 0, y: 0, width: 50, height: 20 });
     await h.registry.reconcile(store.getState());
     expect(await namesOf(h)).toContain('approve-batch');
+    expect(await namesOf(h)).toContain('undo');
 
     store.getState().commitBatch();
     await h.registry.reconcile(store.getState());
     expect(await namesOf(h)).not.toContain('approve-batch');
+    // canUndo is true after a commit — undo stays registered (its natural
+    // moment is right after approving, when the mistake becomes visible).
+    expect(await namesOf(h)).toContain('undo');
   });
 
   it('a design with pending edits re-registers approve-batch after a discard+new edit', async () => {
@@ -147,23 +155,26 @@ describe('ToolRegistry.reconcile', () => {
     expect(await namesOf(h)).toContain('get-design-state');
   });
 
-  it('toolchange fires on every registration change (the approve-batch flip is the dynamic event)', async () => {
+  it('toolchange fires on every registration change (the consent-pair flip is the dynamic event)', async () => {
     const h = setup();
     const store = getStudioStore();
     await h.registry.reconcile(store.getState());
-    expect(h.toolLists.at(-1)).toHaveLength(ALWAYS_ON.length + DESIGN_ONLY.length);
+    expect(h.toolLists.at(-1)).toHaveLength(ALWAYS_ON.length + DESIGN_ONLY.length - 1);
 
     store.getState().createDesign({ name: 'F', size: 'poster' });
     await h.registry.reconcile(store.getState());
-    expect(h.toolLists.at(-1)!.length).toBe(ALWAYS_ON.length + DESIGN_ONLY.length);
+    expect(h.toolLists.at(-1)!.length).toBe(ALWAYS_ON.length + DESIGN_ONLY.length - 1);
 
     store.getState().addElement({ type: 'text', text: 'x', x: 0, y: 0, width: 10, height: 10 });
     await h.registry.reconcile(store.getState());
     expect(h.toolLists.at(-1)).toContain('approve-batch');
+    expect(h.toolLists.at(-1)).toContain('undo');
 
     store.getState().commitBatch();
     await h.registry.reconcile(store.getState());
     expect(h.toolLists.at(-1)).not.toContain('approve-batch');
+    // undo stays while the design has committed versions (canUndo).
+    expect(h.toolLists.at(-1)).toContain('undo');
   });
 
   it('a registerTool rejection surfaces LOUD in status failures', async () => {
@@ -204,7 +215,9 @@ describe('ToolRegistry.reconcile', () => {
     expect(await namesOf(h)).toContain('add-text');
     await h.registry.reconcile(createStudioStore().getState());
     const names = await namesOf(h);
-    expect(names).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].sort());
+    // P1.3: undo is consent-pair-gated, so the empty-store roster is
+    // ALWAYS_ON + DESIGN_ONLY minus undo (approve-batch was already absent).
+    expect(names).toEqual([...ALWAYS_ON, ...DESIGN_ONLY].filter((n) => n !== 'undo').sort());
   });
 });
 

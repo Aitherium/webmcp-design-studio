@@ -155,12 +155,14 @@ describe('scripted judge flow (through the polyfill)', () => {
     expect(exported.preview).toContain('data:image/png');
   });
 
-  it('undo rolls the approved batch back to the empty design', async () => {
+  it('undo rolls the approved batch back to the empty design (P1.3: available via canUndo after the commit)', async () => {
     const { store, report } = await runJudge();
     const undone = textOf(step(report, 'undo last commit'));
     expect(undone.undone).toBe(1);
     expect(store.getState().docs[0].elements).toHaveLength(0);
     expect(store.getState().pendingBatch).toBeNull();
+    // The only version was consumed — undo's availability drops back.
+    expect(store.getState().canUndo).toBe(false);
   });
 
   it('preferences round-trip through IndexedDB', async () => {
