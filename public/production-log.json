@@ -1,7 +1,7 @@
 {
   "studio": "WebMCP Design Studio",
   "lane": "mediaforge",
-  "updated": "2026-09-01T04:06:23.021632+00:00",
+  "updated": "2026-09-01T05:24:47.621373+00:00",
   "entries": [
     {
       "run": "2026-08-31T00:00:00Z",
@@ -341,10 +341,41 @@
         "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
       },
       "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
+    },
+    {
+      "run": "2026-09-01T05:24:47.621373+00:00",
+      "characters": [
+        {
+          "id": "verity",
+          "name": "Verity Voss",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 110780
+        },
+        {
+          "id": "naomi",
+          "name": "Naomi Kai",
+          "ok": true,
+          "images": 1,
+          "error": null,
+          "duration_ms": 185583
+        },
+        {
+          "id": "the-warden",
+          "name": "The Warden",
+          "ok": false,
+          "images": 0,
+          "error": "safety screen refused media 25043: safety screen: vision unreachable (ConnectError: All connection attempts failed)",
+          "duration_ms": 180448
+        }
+      ],
+      "produced": 2,
+      "errors": [
+        "safety screen refused media 25043: safety screen: vision unreachable (ConnectError: All connection attempts failed)"
+      ],
+      "wedge_refused": false,
+      "note": "safety-screened re-render (screen live 2026-09-01)"
     }
-  ],
-  "safety": {
-    "screen": "gemma4-12b on DGX (192.168.1.112:8124)",
-    "deployed": "2026-09-01"
-  }
+  ]
 }
