@@ -28,9 +28,10 @@ Live: **https://studio.aitherium.com**
 
 - **In ChatGPT**: open the URL in ChatGPT's in-app browser — WebMCP is supported out of
   the box. Ask the agent to "make a yard sale flyer, spring theme, white background".
-- **In Chrome**: Chrome 149+ — either enable the origin trial for this site
-  (recommended, no flag needed) or open `chrome://flags/#enable-webmcp-testing`, enable
-  the flag, restart, and load the URL.
+- **In Chrome**: Chrome 149+ — open `chrome://flags/#enable-webmcp-testing`, enable
+  the flag, restart, and load the URL (the flag is the contest's own requirement;
+  the site also carries a spec-shaped WebMCP polyfill, so the in-page agent works
+  everywhere with or without the flag).
 - Then watch the tool list change live as the design state changes (`toolchange` events),
   and approve or undo each batch of edits.
 
