@@ -470,7 +470,7 @@ export function BonsaiChat() {
           aria-label="image backend provider"
         >
           <option value="on-device">On-device (WebGPU)</option>
-          <option value="fleet">Fleet — AitherBonsaiImage</option>
+          <option value="fleet">Fleet — Sana txt2img (the /v1/generate lane)</option>
           <option value="custom">Custom — Sana / ComfyUI / SD</option>
         </select>
         {provider.id !== 'on-device' && (
