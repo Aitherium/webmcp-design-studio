@@ -44,7 +44,21 @@ export const FLEET_DEFAULT_BASE =
     ? 'https://studio-api.aitherium.com/api'
     : '/api/image/';
 
-export const DEFAULT_CONFIG: ImageProviderConfig = { id: 'on-device' };
+/** Origin-aware first-visit default — mirrors the text agent's default
+ * (textAgentConfig.ts): on the PUBLIC origins the fleet lane is the default,
+ * because a judge's first generate-image must not gamble on the WebGPU lane
+ * (measured 2026-08-31: SwiftShader runs 1-6 tok/s and wedges — the session
+ * circuit-breaker then burns a 120s timeout before falling to fleet). The
+ * fleet lane answers in tens of seconds through the tunnel. On-device stays
+ * the default everywhere else (localhost dev, private deployments). A stored
+ * choice always wins over the default. */
+export function defaultImageConfig(): ImageProviderConfig {
+  const isPublicOrigin =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'studio.aitherium.com' ||
+      window.location.hostname === 'studio-preview.aitherium.com');
+  return { id: isPublicOrigin ? 'fleet' : 'on-device' };
+}
 
 /** Shape sent to a provider's `POST {base}/generate`. */
 export interface SyncGenerateRequest {
@@ -66,14 +80,14 @@ export interface SyncGenerateResult {
 export function loadProviderConfig(): ImageProviderConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_CONFIG };
+    if (!raw) return defaultImageConfig();
     const parsed = JSON.parse(raw) as Partial<ImageProviderConfig>;
     if (parsed.id !== 'on-device' && parsed.id !== 'fleet' && parsed.id !== 'custom') {
-      return { ...DEFAULT_CONFIG };
+      return defaultImageConfig();
     }
     return { id: parsed.id, baseUrl: parsed.baseUrl, apiKey: parsed.apiKey };
   } catch {
-    return { ...DEFAULT_CONFIG };
+    return defaultImageConfig();
   }
 }
 
