@@ -4,6 +4,7 @@
  */
 import { FabricCanvas } from './canvas/FabricCanvas';
 import { StatusBar } from './dev/StatusBar';
+import { ProtocolFeed } from './dev/ProtocolFeed';
 import { BonsaiChat } from './agent/BonsaiChat';
 import { useStudio } from './state/store';
 
@@ -71,6 +72,7 @@ export default function App() {
         <aside className="app-rail">
           <StatusBar />
           <BatchCard />
+          <ProtocolFeed />
           <BonsaiChat />
         </aside>
       </main>

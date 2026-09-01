@@ -16,7 +16,7 @@
  * (NotAllowedError from Permissions-Policy, InvalidStateError…) is recorded
  * and surfaced through the status callback (StatusBar renders it LOUD).
  */
-import type { ModelContextSurface, ModelContextTool, RegisteredTool, StudioStateLike, ToolDefinition } from './types';
+import type { ModelContextSurface, ModelContextTool, ProtocolEvent, RegisteredTool, StudioStateLike, ToolDefinition } from './types';
 import { TOOL_DEFINITIONS } from './tools';
 import type { WebMCPStatus } from '../state/store';
 
@@ -25,6 +25,8 @@ export interface RegistryCallbacks {
   onStatus(status: WebMCPStatus): void;
   /** Live tool names after every register/unregister (toolchange UI). */
   onToolsChanged?(names: string[]): void;
+  /** Protocol-feed events (P1.2): register/unregister/toolchange/execute. */
+  onTrace?(event: ProtocolEvent): void;
 }
 
 export function detectSurface(): ModelContextSurface | null {
@@ -45,6 +47,8 @@ export class ToolRegistry {
   private registered = new Set<string>();
   private failures = new Map<string, string>();
   private disposed = false;
+  /** Last observed surface list — for the toolchange feed (P1.2). */
+  private lastObserved: string[] = [];
 
   private chain: Promise<void> = Promise.resolve();
   private getSurface: () => ModelContextSurface | null;
@@ -99,10 +103,17 @@ export class ToolRegistry {
     controller.signal.addEventListener(
       'abort',
       () => {
-        // Abort = unregister (spec). Clean bookkeeping; the browser fires
+        // Abort = unregister (spec). Clean bookkeeping AND record the
+        // unregister HERE, not in abortTool: the listener runs synchronously
+        // during controller.abort() (measured 2026-08-31), so by the time
+        // abortTool re-reads `registered` the name is already gone and its
+        // `wasRegistered` is false — the unregister trace silently vanished.
+        // Recording here is safe in both orderings: whichever half deletes
+        // first, exactly one emission happens. The browser fires
         // `toolchange` itself — we never synthesize it.
-        this.registered.delete(def.name);
+        const wasRegistered = this.registered.delete(def.name);
         this.controllers.delete(def.name);
+        if (wasRegistered) this.emitTrace({ kind: 'unregister', tool: def.name });
       },
       { once: true },
     );
@@ -113,7 +124,35 @@ export class ToolRegistry {
       description: def.description,
       inputSchema: def.inputSchema,
       annotations: def.annotations,
-      execute: def.execute,
+      // P1.2: wrap execute so EVERY call — from a browser agent OR the
+      // in-page agent — lands in the protocol feed with its input, verdict
+      // and elapsed time.
+      execute: async (input, options) => {
+        const started = performance.now();
+        try {
+          const result = await def.execute(input, options);
+          this.emitTrace({
+            kind: 'execute',
+            tool: def.name,
+            detail: summarizeInput(input),
+            // The tool's OWN verdict: every tool funnels user-facing errors
+            // through fail() (execute-io), which sets isError — so a
+            // fail()-return records ✗, never ✓ (P1.2).
+            ok: (result as { isError?: boolean } | null)?.isError !== true,
+            elapsedMs: Math.round(performance.now() - started),
+          });
+          return result;
+        } catch (err) {
+          this.emitTrace({
+            kind: 'execute',
+            tool: def.name,
+            detail: summarizeInput(input),
+            ok: false,
+            elapsedMs: Math.round(performance.now() - started),
+          });
+          throw err;
+        }
+      },
     };
     try {
       await surface.registerTool(tool, { signal: controller.signal });
@@ -125,6 +164,7 @@ export class ToolRegistry {
       this.controllers.set(def.name, controller);
       this.registered.add(def.name);
       this.failures.delete(def.name);
+      this.emitTrace({ kind: 'register', tool: def.name });
     } catch (err) {
       controller.abort(); // never leave a half-registered controller behind
       this.failures.set(def.name, describeError(err));
@@ -133,7 +173,8 @@ export class ToolRegistry {
 
   private abortTool(name: string): void {
     const controller = this.controllers.get(name);
-    if (controller) controller.abort();
+    if (controller) controller.abort(); // the abort listener records the unregister
+    // Safety-net cleanup only — the listener owns bookkeeping + trace now.
     this.registered.delete(name);
     this.controllers.delete(name);
   }
@@ -151,11 +192,36 @@ export class ToolRegistry {
     }
     try {
       const tools = await surface.getTools();
-      this.callbacks.onToolsChanged?.(tools.map((t: RegisteredTool) => t.name).sort());
+      const names = tools.map((t: RegisteredTool) => t.name).sort();
+      // P1.2: the toolchange feed — record when the SURFACE's roster moved
+      // (the browser fires toolchange; this is the observed consequence).
+      if (names.join(',') !== this.lastObserved.join(',')) {
+        const added = names.filter((n) => !this.lastObserved.includes(n));
+        const removed = this.lastObserved.filter((n) => !names.includes(n));
+        const delta = [...added.map((n) => `+${n}`), ...removed.map((n) => `-${n}`)].join(' ');
+        if (delta) this.emitTrace({ kind: 'toolchange', tool: delta });
+        this.lastObserved = names;
+      }
+      this.callbacks.onToolsChanged?.(names);
     } catch (err) {
       this.failures.set('(getTools)', describeError(err));
       this.emitStatus();
     }
+  }
+
+  private emitTrace(event: Omit<ProtocolEvent, 'ts'>): void {
+    this.callbacks.onTrace?.({ ts: Date.now(), ...event });
+  }
+}
+
+/** The execute input as a short feed line (JSON, ~140 chars). */
+function summarizeInput(input: unknown): string {
+  if (input == null) return '{}';
+  try {
+    const json = typeof input === 'string' ? input : JSON.stringify(input);
+    return json.length > 140 ? `${json.slice(0, 137)}…` : json;
+  } catch {
+    return String(input).slice(0, 140);
   }
 }
 

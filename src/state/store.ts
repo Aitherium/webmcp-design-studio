@@ -11,7 +11,12 @@
  *   (never silently discards human-visible work).
  */
 import { create } from 'zustand';
+import type { ProtocolEvent } from '../webmcp/types';
 import type { PaletteId, DesignSizeId } from '../brand/tokens';
+
+/** The protocol feed's ring-buffer cap (P1.2) — a judge's session is a few
+ * hundred events; keep the scrollback bounded. */
+export const PROTOCOL_TRACE_CAP = 200;
 import {
   applyOps,
   cloneDesignDoc,
@@ -67,6 +72,10 @@ export interface StudioState {
    * pending OR the current design has committed versions to roll back —
    * exposed as a field because the version stacks are a closure, not state. */
   canUndo: boolean;
+  /** P1.2: the protocol feed — bounded ring of register/toolchange/execute
+   * events. Session-only (never persisted), like liveToolNames. */
+  protocolTrace: ProtocolEvent[];
+  pushProtocolTrace(event: ProtocolEvent): void;
 
   /** Live tool names read from the WebMCP surface (toolchange UI). */
   liveToolNames: string[];
@@ -172,6 +181,7 @@ export const createStudioStore = () => {
       pendingBatch: persisted?.pendingBatch ?? null,
       // Version stacks are never persisted — a reload can't undo.
       canUndo: false,
+      protocolTrace: [],
       liveToolNames: [],
       webmcpStatus: null,
       runtimeStatus: null,
@@ -358,6 +368,12 @@ export const createStudioStore = () => {
       },
       setAgent(patch) {
         set((s) => ({ agent: { ...s.agent, ...patch } }));
+      },
+      pushProtocolTrace(event) {
+        set((s) => {
+          const next = [...s.protocolTrace, event];
+          return { protocolTrace: next.length > PROTOCOL_TRACE_CAP ? next.slice(-PROTOCOL_TRACE_CAP) : next };
+        });
       },
     };
   });

@@ -80,6 +80,19 @@ export interface StudioStateLike {
   canUndo: boolean;
 }
 
+/** One line of the protocol feed (P1.2, 2026-08-31) — the WebMCP Leverage
+ * exhibit: register/unregister/toolchange/execute recorded by the registry,
+ * rendered as a monospace scrollback so a judge SEES the protocol working. */
+export interface ProtocolEvent {
+  ts: number;
+  kind: 'register' | 'unregister' | 'toolchange' | 'execute';
+  tool: string;
+  /** execute: the input args (JSON, truncated). toolchange: the delta. */
+  detail?: string;
+  ok?: boolean;
+  elapsedMs?: number;
+}
+
 /** The runtime surface we register against. The real browser API satisfies
  * this structurally; the polyfill implements it literally. */
 export interface ModelContextSurface {

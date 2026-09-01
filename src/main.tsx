@@ -19,6 +19,7 @@ installModelContextPolyfill();
 const registry = new ToolRegistry(detectSurface, {
   onStatus: (status) => getStudioStore().getState().setWebMCPStatus(status),
   onToolsChanged: (names) => getStudioStore().getState().setLiveTools(names),
+  onTrace: (event) => getStudioStore().getState().pushProtocolTrace(event),
 });
 getStudioStore().subscribe((state, prev) => {
   // Reconcile only on DESIGN-state changes. The registry's own writes

@@ -646,3 +646,74 @@
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* ── Protocol feed (P1.2) ───────────────────────────────── */
+
+.rail-card-feed {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.feed-count {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.feed-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.feed-empty {
+  color: var(--text-muted);
+}
+
+.feed-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.feed-time {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.feed-kind {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.feed-kind-register { color: #3ddc84; background: rgba(61, 220, 132, 0.12); }
+.feed-kind-unregister { color: #ff7a7a; background: rgba(255, 122, 122, 0.12); }
+.feed-kind-toolchange { color: #ffc46b; background: rgba(255, 196, 107, 0.12); }
+.feed-kind-execute { color: #6bc4ff; background: rgba(107, 196, 255, 0.12); }
+
+.feed-tool {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.feed-detail {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.feed-elapsed {
+  color: var(--text-muted);
+  margin-left: auto;
+}
