@@ -1,0 +1,16 @@
+{
+  "studio": "WebMCP Design Studio",
+  "lane": "mediaforge",
+  "updated": "2026-08-31T18:00:00Z",
+  "entries": [
+    {
+      "run": "2026-08-31T00:00:00Z",
+      "produced": 0,
+      "characters": [],
+      "errors": [
+        "day zero: pipeline repaired — SAM2 error path fixed, queue-wedge gate added; production runs begin 2026-09-01 02:23"
+      ],
+      "wedge_refused": false
+    }
+  ]
+}

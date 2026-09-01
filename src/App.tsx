@@ -5,6 +5,7 @@
 import { FabricCanvas } from './canvas/FabricCanvas';
 import { StatusBar } from './dev/StatusBar';
 import { ProtocolFeed } from './dev/ProtocolFeed';
+import { ProductionCard } from './dev/ProductionCard';
 import { BonsaiChat } from './agent/BonsaiChat';
 import { useStudio } from './state/store';
 
@@ -73,6 +74,7 @@ export default function App() {
           <StatusBar />
           <BatchCard />
           <ProtocolFeed />
+          <ProductionCard />
           <BonsaiChat />
         </aside>
       </main>

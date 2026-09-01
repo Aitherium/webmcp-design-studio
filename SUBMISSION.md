@@ -13,8 +13,8 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 WebMCP's promise is that a website *declares* what agents can do instead of forcing
 agents to guess. The studio is built entirely around that declaration: every capability
-of the design tool is registered on `document.modelContext.registerTool()` — **16 tools**
-covering the whole creative loop across nine families:
+of the design tool is registered on `document.modelContext.registerTool()` — **17 tools**
+covering the whole creative loop across ten families:
 
 - **Designs**: `create-design`, `duplicate-design`, `list-designs`, `get-design-state`
 - **Elements**: `add-text`, `edit-element`, `remove-element`
@@ -24,6 +24,8 @@ covering the whole creative loop across nine families:
 - **Style + export**: `restyle-design`, `export-design` (PNG/JPEG 1x/2x)
 - **Consent**: `approve-batch`, `undo`
 - **Memory**: `remember-preference`, `recall-preference`
+- **Production**: `production-log` — the studio's week-long Dark Matters production
+  ledger, readable by any agent: days, total pieces, last run's health
 
 Two details make it genuine leverage rather than a demo stub:
 
@@ -98,7 +100,7 @@ legible, not magic.
 ## Demo video script (≈2:30)
 
 1. **0:00–0:15** — Open studio.aitherium.com in WebMCP-enabled Chrome. The protocol
-   feed shows the boot registration burst: 14 tools declared on
+   feed shows the boot registration burst: 15 tools declared on
    `document.modelContext`; the StatusBar shows the live roster.
 2. **0:15–0:35** — Tap the "Iris hero cutout" starter chip. The agent streams
    `create-design` → `iris-generate` (the platform's Visual Artisan optimizes the

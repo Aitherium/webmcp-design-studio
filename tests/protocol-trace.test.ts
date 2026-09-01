@@ -30,11 +30,11 @@ function setup() {
 }
 
 describe('protocol feed — the registry records the WebMCP story (P1.2)', () => {
-  it('boot: exactly the live roster registers (14 = 16 defs minus the consent pair)', async () => {
+  it('boot: exactly the live roster registers (15 = 17 defs minus the consent pair)', async () => {
     const { registry, trace } = setup();
     await registry.reconcile(getStudioStore().getState());
     const registers = trace.filter((e) => e.kind === 'register');
-    expect(registers).toHaveLength(14);
+    expect(registers).toHaveLength(15);
     expect(registers.map((e) => e.tool)).not.toContain('approve-batch');
     expect(registers.map((e) => e.tool)).not.toContain('undo');
     // The first toolchange records the whole roster appearing (the delta
