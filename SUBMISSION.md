@@ -5,7 +5,7 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 **Repo:** https://github.com/Aitherium/webmcp-design-studio (MIT)
 
-**Demo video:** [YouTube — WebMCP Design Studio walkthrough](https://www.youtube.com/…) (2:30, with audio)
+**Demo video:** [YouTube — WebMCP Design Studio walkthrough](https://www.youtube.com/…) (0:53, with audio; source `demo/webmcp-demo-2026-09-02.mp4`)
 
 ---
 
