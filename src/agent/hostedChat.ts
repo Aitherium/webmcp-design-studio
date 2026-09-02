@@ -43,6 +43,18 @@ const HOSTED_BASE =
     : '/api/chat');
 const HOSTED_MODEL = 'bonsai-27b';
 
+/** The SECOND fleet text lane — the orchestrator vLLM behind the studio's own
+ * nginx (/api/chat2/ -> aither-vllm-fp16, CORS stamped by the proxy). Bonsai is
+ * a 27B on one consumer GPU and segfaults when that card saturates (measured
+ * 2026-09-01: a judge-facing turn died with "agent failed: network error"). A
+ * turn that fails on the primary before producing a token is replayed here. */
+const HOSTED_FALLBACK_BASE =
+  (import.meta.env?.VITE_HOSTED_FALLBACK_BASE as string | undefined) ??
+  (typeof window !== 'undefined' && window.location.hostname === 'studio.aitherium.com'
+    ? 'https://studio-preview.aitherium.com/api/chat2'
+    : '/api/chat2');
+const HOSTED_FALLBACK_MODEL = 'aither-orchestrator-8b';
+
 export interface OpenAICompatibleWorkerOptions {
   /** Base — accepts 'https://host', 'https://host/v1' or a full
    * '/chat/completions' URL; the adapter normalizes. */
@@ -169,7 +181,71 @@ export function createOpenAICompatibleWorker(opts: OpenAICompatibleWorkerOptions
   };
 }
 
-/** The fleet brain lane — the same adapter pointed at the studio's proxy. */
+/**
+ * Primary/secondary pair: a request that ERRORS on the primary before any
+ * token was streamed is replayed on the secondary, and the secondary's events
+ * are relayed as if they were the primary's. A request that already streamed
+ * output is never replayed (the user would see the answer twice). Interrupt
+ * and dispose fan out to both.
+ */
+export function createFallbackChatWorker(
+  primary: ChatWorkerLike,
+  secondary: ChatWorkerLike,
+  onFallback?: (reason: string) => void,
+): ChatWorkerLike {
+  const listeners = new Set<(msg: WorkerResponse) => void>();
+  let last: WorkerRequest | null = null;
+  let sawOutput = false;
+  let active: 'primary' | 'secondary' = 'primary';
+  const emit = (msg: WorkerResponse) => {
+    for (const l of listeners) l(msg);
+  };
+  primary.on((msg) => {
+    if (active !== 'primary') return;
+    if (msg.type === 'error' && !sawOutput && last) {
+      active = 'secondary';
+      onFallback?.(msg.message);
+      secondary.post(last);
+      return;
+    }
+    if (msg.type === 'token') sawOutput = true;
+    emit(msg);
+  });
+  secondary.on((msg) => {
+    if (active === 'secondary') emit(msg);
+  });
+  return {
+    post(msg) {
+      last = msg;
+      sawOutput = false;
+      active = 'primary';
+      primary.post(msg);
+    },
+    on(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    interrupt() {
+      primary.interrupt();
+      secondary.interrupt();
+    },
+    dispose() {
+      primary.dispose();
+      secondary.dispose();
+      listeners.clear();
+    },
+  };
+}
+
+/** The fleet brain lane — Bonsai through the studio's proxy, with the
+ * orchestrator lane as the fallback for a turn that fails before its first token. */
 export function createHostedChatWorker(): ChatWorkerLike {
-  return createOpenAICompatibleWorker({ baseUrl: HOSTED_BASE, model: HOSTED_MODEL });
+  return createFallbackChatWorker(
+    createOpenAICompatibleWorker({ baseUrl: HOSTED_BASE, model: HOSTED_MODEL }),
+    createOpenAICompatibleWorker({ baseUrl: HOSTED_FALLBACK_BASE, model: HOSTED_FALLBACK_MODEL }),
+    (reason) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[fleet] primary text lane failed (${reason}) — replaying on the orchestrator lane`);
+    },
+  );
 }

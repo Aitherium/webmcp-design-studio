@@ -26,6 +26,11 @@ discovers them, and then a human + agent can collaborate:
 
 Live: **https://studio.aitherium.com**
 
+**In ChatGPT's browser, three lines:**
+1. Open `https://studio.aitherium.com` in ChatGPT's in-app browser.
+2. Say: *"make a spring yard sale flyer — Saturday 8am–2pm, 14 Orchard Lane, white background."*
+3. Watch the tools fire in the protocol feed, then click **Approve batch** (or say "discard").
+
 - **In ChatGPT**: open the URL in ChatGPT's in-app browser — WebMCP is supported out of
   the box. Ask the agent to "make a yard sale flyer, spring theme, white background".
 - **In Chrome**: Chrome 149+ — open `chrome://flags/#enable-webmcp-testing`, enable
@@ -45,6 +50,18 @@ npm run build    # static export for GitHub Pages
 ```
 
 ## How it's built
+
+```mermaid
+flowchart LR
+  A[Agent: ChatGPT browser / Chrome+flag / in-page agent] -- getTools / executeTool --> M[document.modelContext<br/>native or polyfill]
+  M --> R[ToolRegistry<br/>17 tools + toolchange]
+  R --> S[Design store<br/>pending batch -> approve-batch -> committed]
+  S --> C[fabric canvas + export]
+  R -- generate-image --> I[studio proxy -> Sana]
+  R -- in-page agent chat --> T[Bonsai 27B, fallback: orchestrator]
+  R -- production-log --> P[production-log.json + /pieces]
+  U[Human] -- Approve / Discard, also a declarative form tool --> S
+```
 
 - **WebMCP surface**: `src/webmcp/` — a typed registry over `document.modelContext`
   (with the `navigator.modelContext` pre-150 fallback), dynamic tool registration

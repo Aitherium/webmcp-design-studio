@@ -9,6 +9,19 @@ import { ProductionCard } from './dev/ProductionCard';
 import { BonsaiChat } from './agent/BonsaiChat';
 import { useStudio } from './state/store';
 
+/** Declarative WebMCP (the `<form toolname>` path). Spread as plain DOM
+ * attributes — React passes lowercase unknown attributes through, and they
+ * are inert wherever the native API is absent. */
+const DECLARATIVE_BATCH_FORM: Record<string, string> = {
+  toolname: 'decide-pending-batch',
+  tooldescription:
+    "Approve or discard the agent's pending batch of edits — the human consent step. decision: approve | discard.",
+  toolautosubmit: '',
+};
+const DECLARATIVE_DECISION_PARAM: Record<string, string> = {
+  toolparamdescription: '"approve" commits the pending batch to the design; "discard" throws it away.',
+};
+
 function BatchCard() {
   const pending = useStudio((s) => s.pendingBatch);
   const commit = useStudio((s) => s.commitBatch);
@@ -37,14 +50,38 @@ function BatchCard() {
           </li>
         ))}
       </ul>
-      <div className="batch-actions">
-        <button className="chip chip-approve" onClick={() => commit()}>
+      {/* The consent step is ALSO a declarative WebMCP tool: a `<form toolname>`
+          (the spec's second registration path) a native agent can fill and
+          submit. `toolautosubmit` submits when the agent fills the decision;
+          humans use the two buttons. The polyfill ignores these attributes. */}
+      <form
+        className="batch-actions"
+        {...DECLARATIVE_BATCH_FORM}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+          const decision = submitter?.value || new FormData(e.currentTarget).get('decision');
+          if (decision === 'discard') discard();
+          else commit();
+        }}
+      >
+        <select
+          name="decision"
+          defaultValue="approve"
+          aria-label="Decision for the pending batch"
+          style={{ position: 'absolute', left: -9999, width: 1, height: 1, opacity: 0 }}
+          {...DECLARATIVE_DECISION_PARAM}
+        >
+          <option value="approve">approve</option>
+          <option value="discard">discard</option>
+        </select>
+        <button type="submit" name="decision" value="approve" className="chip chip-approve">
           Approve batch
         </button>
-        <button className="chip chip-discard" onClick={() => discard()}>
+        <button type="submit" name="decision" value="discard" className="chip chip-discard">
           Discard
         </button>
-      </div>
+      </form>
     </div>
   );
 }

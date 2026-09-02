@@ -60,13 +60,20 @@ export const productionLogTool: ToolDefinition = {
       const total = log.entries.reduce((n, e) => n + (e.produced || 0), 0);
       const last = log.entries.at(-1);
       const days = log.entries.length;
+      // Name the work, not just the count: an agent asked "what did the studio
+      // make this week?" should be able to answer with the pieces.
+      const pieces = log.entries.flatMap((e) =>
+        (e.characters ?? []).filter((c) => c.ok).map((c) => ({ id: c.id, name: c.name, run: e.run })),
+      );
       return ok(
         JSON.stringify({
           days,
           totalPieces: total,
+          pieces,
           lastRun: last ? {
             run: last.run,
             produced: last.produced,
+            pieces: (last.characters ?? []).filter((c) => c.ok).map((c) => c.name),
             errors: last.errors ?? [],
             wedgeRefused: last.wedge_refused ?? false,
           } : null,

@@ -26,7 +26,10 @@ import { makeThumbnail } from './thumbnail';
 /** The full /quick path is prompt-enhance (LLM) + a generation against a
  * shared single-process backend measured at ~174s per job — a 5-minute
  * budget with a live heartbeat. */
-const IRIS_TIMEOUT_MS = 300_000;
+// Under Cloudflare's 100 s origin cut: the public lane rides the tunnel, so a
+// slower turn would surface as a 524 with no message anyway. Measured 2026-09-02
+// after the Iris/MicroScheduler repairs: 42 s end to end.
+const IRIS_TIMEOUT_MS = 90_000;
 
 export interface IrisQuickResult {
   success: boolean;
