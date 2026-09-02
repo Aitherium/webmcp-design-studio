@@ -6,7 +6,13 @@ import App from './App.tsx';
 import { installModelContextPolyfill } from './webmcp/polyfill';
 import { detectSurface, ToolRegistry } from './webmcp/registry';
 import { getStudioStore } from './state/store';
+import { computeEmbed, markEmbedChrome } from './embed';
 import './dev/scriptedAgent'; // window.__judgeScript()
+
+// Embed mode (framed in the Community Canvas, or ?embed=1): strip the app
+// chrome so the studio reads as part of the hosting page. The standalone
+// surface is untouched when not embedded.
+markEmbedChrome(computeEmbed());
 
 /**
  * WebMCP bootstrap:

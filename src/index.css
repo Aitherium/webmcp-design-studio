@@ -10,6 +10,15 @@
     var(--bg-deep);
 }
 
+/* ── Embed mode (framed in the Community Canvas, or ?embed=1) ──────────────
+   Chrome off: the studio reads as part of the hosting page. The standalone
+   surface never carries the attribute and is untouched. */
+
+[data-aither-embed='1'] .app-header,
+[data-aither-embed='1'] .app-footer {
+  display: none;
+}
+
 /* ── Header ─────────────────────────────────────────────── */
 
 .app-header {
