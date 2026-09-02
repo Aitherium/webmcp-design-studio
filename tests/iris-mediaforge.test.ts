@@ -78,7 +78,7 @@ describe('iris-generate — the /quick single-shot tool', () => {
     expect(extractIrisImage({ success: false, image: LONG_PNG_B64 })).toBeNull();
   });
 
-  it('POSTs the REAL contract (/quick, enhance:true) and reports the optimized prompt', async () => {
+  it('POSTs the REAL contract (/quick, enhance:false — plan_generation still optimizes) and reports the optimized prompt', async () => {
     let posted: { url: unknown; body?: string } = { url: null };
     vi.stubGlobal(
       'fetch',
@@ -106,7 +106,7 @@ describe('iris-generate — the /quick single-shot tool', () => {
     expect(String(posted.url)).toContain('/quick');
     const sent = JSON.parse(posted.body ?? '{}') as Record<string, unknown>;
     expect(sent.prompt).toBe('a coffee cup');
-    expect(sent.enhance).toBe(true);
+    expect(sent.enhance).toBe(false); // 2026-09-02: the enhance hop cost 30-100 s through the tunnel
     expect(sent.width).toBeGreaterThan(0);
     const parsed = JSON.parse(textOf(out)) as Record<string, unknown>;
     expect(parsed.elementId).toBeTruthy();
