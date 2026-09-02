@@ -78,7 +78,11 @@ export const irisGenerateTool: ToolDefinition = {
               prompt,
               width: dims.width,
               height: dims.height,
-              enhance: true,
+              // enhance=false (2026-09-02): Iris's enhance_prompt is a second LLM round
+              // trip before plan_generation (which still optimizes the prompt). Measured
+              // through the public path: 15 s without it, 42-114 s with it, and two
+              // concurrent enhanced turns serialize past Cloudflare's 100 s cut.
+              enhance: false,
             }),
           });
           if (!res.ok) {
