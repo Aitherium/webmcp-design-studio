@@ -24,7 +24,7 @@ covering the whole creative loop across ten families:
 - **Style + export**: `restyle-design`, `export-design` (PNG/JPEG 1x/2x)
 - **Consent**: `approve-batch`, `undo`
 - **Memory**: `remember-preference`, `recall-preference`
-- **Production**: `production-log` — the studio's week-long Dark Matters production
+- **Production**: `production-log` — the studio's week-long production
   ledger, readable by any agent: days, total pieces, last run's health
 
 Two details make it genuine leverage rather than a demo stub:
@@ -113,7 +113,7 @@ legible, not magic.
    `edit-element` stream, approve again. The toolchange events in the feed show the
    consent tools vanishing as each batch commits.
 5. **1:40–2:10** — The production story: the studio's `production-log` tool reads the
-   week's real run — "N pieces generated for Dark Matters this week" — live evidence
+   week's real run — "N pieces produced this week" — live evidence
    the studio is a working production surface, not a demo.
 6. **2:10–2:30** — Close: agents draft, humans decide, WebMCP makes the contract —
    and the contract is visible on screen the whole time.
