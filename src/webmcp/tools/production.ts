@@ -2,14 +2,14 @@
  * production-log (P2.3, 2026-08-31) — the Potential Impact exhibit.
  *
  * The WebMCP studio is not a demo: since 2026-08-31 it has been running as a
- * production studio for the Dark Matters universe, rendering character art
- * through the media-forge lane every day (the dm-production-daily routine on
- * the AitherOS side appends a day's entry to public/production-log.json, and
- * the Pages deploy carries it here). This tool reads that log back to any
+ * production line for real print pieces — flyers and posters rendered through
+ * the studio's own image lane every day (the production routine on the
+ * AitherOS side appends a day's entry to public/production-log.json, and the
+ * Pages deploy carries it here). This tool reads that log back to any
  * agent that asks: what was produced, when, and whether the lane is healthy.
  *
- * The agent sees the SAME exhibit the judge sees — "this week: N pieces for
- * Dark Matters" is a tool result, not a marketing line.
+ * The agent sees the SAME exhibit the judge sees — "this week: N pieces" is a
+ * tool result, not a marketing line.
  */
 import type { ToolDefinition } from '../types';
 import { ok, fail } from '../execute-io';
@@ -43,7 +43,7 @@ export const productionLogTool: ToolDefinition = {
   name: 'production-log',
   title: 'Production log',
   description:
-    'Read the studio production log: how many Dark Matters pieces were produced, on which runs, and whether the media-forge lane is healthy. The studio has been generating content for the Dark Matters universe since 2026-08-31 — this is the week-long production exhibit, day by day.',
+    'Read the studio production log: how many pieces (flyers, posters, posts) were produced, on which runs, and whether the image lane is healthy. The studio has been running as a real production line since 2026-08-31 — this is the week-long production exhibit, day by day.',
   inputSchema: {
     type: 'object',
     properties: {},

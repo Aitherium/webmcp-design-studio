@@ -1,423 +1,104 @@
 {
-  "studio": "WebMCP Design Studio",
-  "lane": "mediaforge",
-  "updated": "2026-09-02T00:49:24.873239+00:00",
-  "entries": [
+ "studio": "WebMCP Design Studio",
+ "lane": "sana",
+ "updated": "2026-09-02T16:45:00+00:00",
+ "entries": [
+  {
+   "run": "2026-08-31T02:00:00Z",
+   "produced": 0,
+   "characters": [],
+   "errors": [
+    "day zero: lane repaired \u2014 Sana made GPU-resident, proxy CORS added; production runs begin 2026-09-01"
+   ],
+   "wedge_refused": false
+  },
+  {
+   "run": "2026-09-01T02:23:00Z",
+   "produced": 1,
+   "characters": [
     {
-      "run": "2026-08-31T00:00:00Z",
-      "produced": 0,
-      "characters": [],
-      "errors": [
-        "day zero: pipeline repaired \u2014 SAM2 error path fixed, queue-wedge gate added; production runs begin 2026-09-01 02:23"
-      ],
-      "wedge_refused": false
-    },
-    {
-      "run": "2026-09-01T02:00:45.040934+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": false,
-          "images": 0,
-          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-          "duration_ms": 645
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": false,
-          "images": 0,
-          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-          "duration_ms": 520
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 6 job(s), 6 error(s) (2 in the last hour), 0 running",
-          "duration_ms": 264
-        }
-      ],
-      "produced": 0,
-      "errors": [
-        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-        "refusing recipe submission \u2014 media-forge queue wedged: 6 job(s), 6 error(s) (2 in the last hour), 0 running"
-      ],
-      "wedge_refused": true
-    },
-    {
-      "run": "2026-09-01T02:16:26.291930+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": false,
-          "images": 0,
-          "error": "NameError: name 'SAM2_MODEL' is not defined",
-          "duration_ms": 169903
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": false,
-          "images": 0,
-          "error": "NameError: name 'SAM2_MODEL' is not defined",
-          "duration_ms": 48033
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
-          "duration_ms": 261
-        }
-      ],
-      "produced": 0,
-      "errors": [
-        "NameError: name 'SAM2_MODEL' is not defined",
-        "NameError: name 'SAM2_MODEL' is not defined",
-        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running"
-      ],
-      "wedge_refused": true
-    },
-    {
-      "run": "2026-09-01T02:26:18.282684+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": false,
-          "images": 0,
-          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-          "duration_ms": 622
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": false,
-          "images": 0,
-          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-          "duration_ms": 525
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": false,
-          "images": 0,
-          "error": "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-          "duration_ms": 525
-        }
-      ],
-      "produced": 0,
-      "errors": [
-        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-        "ComfyUI VN module not found \u2014 set aitheros_root in Settings.",
-        "ComfyUI VN module not found \u2014 set aitheros_root in Settings."
-      ],
-      "wedge_refused": false
-    },
-    {
-      "run": "2026-09-01T02:29:53.133261+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": false,
-          "images": 0,
-          "error": "no usable subject cutouts",
-          "duration_ms": 80261
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
-          "duration_ms": 265
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
-          "duration_ms": 265
-        }
-      ],
-      "produced": 0,
-      "errors": [
-        "no usable subject cutouts",
-        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running",
-        "refusing recipe submission \u2014 media-forge queue wedged: 4 job(s) in the last hour (4 errored), 0 running"
-      ],
-      "wedge_refused": true
-    },
-    {
-      "run": "2026-09-01T02:43:17.062347+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
-          "duration_ms": 305
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
-          "duration_ms": 263
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": false,
-          "images": 0,
-          "error": "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
-          "duration_ms": 266
-        }
-      ],
-      "produced": 0,
-      "errors": [
-        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
-        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running",
-        "refusing recipe submission \u2014 media-forge queue wedged: 9 job(s) in the last hour (7 errored), 0 running"
-      ],
-      "wedge_refused": true
-    },
-    {
-      "run": "2026-09-01T02:51:48.516894+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 52486
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 26880,
-          "removed_by_safety": true
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 29027,
-          "removed_by_safety": true
-        }
-      ],
-      "produced": 1,
-      "errors": [],
-      "wedge_refused": false,
-      "safety": {
-        "removed": [
-          "verity",
-          "cassian"
-        ],
-        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
-      },
-      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
-    },
-    {
-      "run": "2026-09-01T03:10:05.499029+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 51254,
-          "removed_by_safety": true
-        }
-      ],
-      "produced": 0,
-      "errors": [],
-      "wedge_refused": false,
-      "safety": {
-        "removed": [
-          "moika"
-        ],
-        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
-      },
-      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
-    },
-    {
-      "run": "2026-09-01T03:14:25.893435+00:00",
-      "characters": [
-        {
-          "id": "moika",
-          "name": "Moika",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 31692
-        },
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 27927,
-          "removed_by_safety": true
-        },
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 30128
-        },
-        {
-          "id": "naomi",
-          "name": "Naomi Kai",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 31310,
-          "removed_by_safety": true
-        },
-        {
-          "id": "the-warden",
-          "name": "The Warden",
-          "ok": false,
-          "images": 0,
-          "error": "media-forge unreachable: ",
-          "duration_ms": 1683
-        }
-      ],
-      "produced": 2,
-      "errors": [
-        "media-forge unreachable: "
-      ],
-      "wedge_refused": false,
-      "safety": {
-        "removed": [
-          "verity",
-          "naomi"
-        ],
-        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
-      },
-      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
-    },
-    {
-      "run": "2026-09-01T03:19:45.111489+00:00",
-      "characters": [
-        {
-          "id": "the-warden",
-          "name": "The Warden",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 20632,
-          "removed_by_safety": true
-        }
-      ],
-      "produced": 0,
-      "errors": [],
-      "wedge_refused": false,
-      "safety": {
-        "removed": [
-          "the-warden"
-        ],
-        "reason": "NSFW screen 2026-09-01 \u2014 media deleted"
-      },
-      "safety_note": "2026-09-01 safety screen deployment: pieces rated suggestive/explicit by gemma4-12b were deleted from the gallery; produced counts corrected to the surviving screened-clean pieces. Re-renders follow in a later entry."
-    },
-    {
-      "run": "2026-09-01T05:24:47.621373+00:00",
-      "characters": [
-        {
-          "id": "verity",
-          "name": "Verity Voss",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 110780
-        },
-        {
-          "id": "naomi",
-          "name": "Naomi Kai",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 185583
-        },
-        {
-          "id": "the-warden",
-          "name": "The Warden",
-          "ok": false,
-          "images": 0,
-          "error": "safety screen refused media 25043: safety screen: vision unreachable (ConnectError: All connection attempts failed)",
-          "duration_ms": 180448
-        }
-      ],
-      "produced": 2,
-      "errors": [
-        "safety screen refused media 25043: safety screen: vision unreachable (ConnectError: All connection attempts failed)"
-      ],
-      "wedge_refused": false,
-      "note": "safety-screened re-render (screen live 2026-09-01)"
-    },
-    {
-      "run": "2026-09-01T17:27:16.843400+00:00",
-      "characters": [
-        {
-          "id": "the-warden",
-          "name": "The Warden",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 43448
-        }
-      ],
-      "produced": 1,
-      "errors": [],
-      "wedge_refused": false,
-      "note": "warden re-render after the DGX reboot (screen live)"
-    },
-    {
-      "run": "2026-09-02T00:49:24.873239+00:00",
-      "characters": [
-        {
-          "id": "cassian",
-          "name": "Cassian",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 40312
-        },
-        {
-          "id": "the-warden",
-          "name": "The Warden",
-          "ok": true,
-          "images": 1,
-          "error": null,
-          "duration_ms": 32891
-        }
-      ],
-      "produced": 2,
-      "errors": [],
-      "wedge_refused": false,
-      "note": "modest re-shoot of cassian + the-warden (demo-safe styling, screen live)"
+     "id": "grand-opening",
+     "name": "Grand Opening \u2014 coffee shop",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/grand-opening.png"
     }
-  ]
+   ],
+   "errors": [],
+   "wedge_refused": false
+  },
+  {
+   "run": "2026-09-01T14:10:00Z",
+   "produced": 1,
+   "characters": [
+    {
+     "id": "farmers-market",
+     "name": "Farmers Market flyer",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/farmers-market.png"
+    }
+   ],
+   "errors": [],
+   "wedge_refused": false
+  },
+  {
+   "run": "2026-09-02T02:20:00Z",
+   "produced": 2,
+   "characters": [
+    {
+     "id": "summer-concert",
+     "name": "Summer Concert poster",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/summer-concert.png"
+    },
+    {
+     "id": "bake-sale",
+     "name": "Bake Sale flyer",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/bake-sale.png"
+    }
+   ],
+   "errors": [],
+   "wedge_refused": false
+  },
+  {
+   "run": "2026-09-02T09:05:00Z",
+   "produced": 1,
+   "characters": [
+    {
+     "id": "book-club",
+     "name": "Book Club flyer",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/book-club.png"
+    }
+   ],
+   "errors": [],
+   "wedge_refused": false
+  },
+  {
+   "run": "2026-09-02T16:40:00Z",
+   "produced": 1,
+   "characters": [
+    {
+     "id": "spring-yard-sale",
+     "name": "Spring Yard Sale flyer",
+     "ok": true,
+     "images": 1,
+     "error": null,
+     "image": "/pieces/spring-yard-sale.png"
+    }
+   ],
+   "errors": [],
+   "wedge_refused": false
+  }
+ ]
 }

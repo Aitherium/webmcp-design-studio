@@ -4,7 +4,7 @@
  * every store change and registers/unregisters on the WebMCP surface.
  *
  * Registration order tells the demo story: 15 tools are live at boot (14 +
- * production-log, P2.3 — the Dark Matters production exhibit), and the
+ * production-log, P2.3 — the production exhibit), and the
  * CONSENT PAIR (approve-batch + undo, P1.3) exists ONLY while a batch
  * is pending — both vanish the moment the human approves, and `toolchange`
  * fires as they appear and disappear. Design-scoped tools stay permanently
@@ -29,7 +29,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // Always available — the agent's opening hand.
   ...DESIGN_TOOLS, // list-designs, get-design-state, create-design, duplicate-design
   ...MEMORY_TOOLS, // remember-preference, recall-preference
-  ...PRODUCTION_TOOLS, // production-log (P2.3 — the Dark Matters exhibit)
+  ...PRODUCTION_TOOLS, // production-log (P2.3 — the production exhibit)
   ...BATCH_TOOLS, // approve-batch (pending-only), undo
 
   // Available only while a design exists.

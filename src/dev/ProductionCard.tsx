@@ -1,7 +1,7 @@
 /**
  * ProductionCard (P2.3, 2026-08-31) — the Potential Impact exhibit in the rail.
  *
- * "This week: N pieces for Dark Matters" — read from public/production-log.json,
+ * "This week: N pieces" — read from public/production-log.json,
  * the same file the production-log WebMCP tool serves to agents. The log is
  * appended to daily by the AitherOS dm-production-daily routine and carried
  * here by the Pages deploy, so the card is the same exhibit the tool returns:
@@ -46,7 +46,7 @@ export function ProductionCard() {
   const last = state.lastRun;
   return (
     <div className="rail-card rail-card-production">
-      <h2>Dark Matters production</h2>
+      <h2>Studio production</h2>
       {state.error ? (
         <p className="feed-empty">Production log unavailable — {state.error}</p>
       ) : (
@@ -64,9 +64,9 @@ export function ProductionCard() {
             <p className="production-last">No production runs yet — the lane starts tonight.</p>
           )}
           <p className="production-note">
-            The studio has been generating art for the Dark Matters universe since 2026-08-31 —
-            every day the dm-production routine renders the cast through the media-forge lane and
-            appends the outcome here. Ask the agent: “what has the studio produced this week?”
+            The studio has been producing real print pieces — flyers, posters, posts — since 2026-08-31;
+            every day the production routine renders the day's brief through the studio's image lane
+            and appends the outcome here. Ask the agent: “what has the studio produced this week?”
           </p>
         </>
       )}
