@@ -13,8 +13,8 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 WebMCP's promise is that a website *declares* what agents can do instead of forcing
 agents to guess. The studio is built entirely around that declaration: every capability
-of the design tool is registered on `document.modelContext.registerTool()` — **17 tools**
-covering the whole creative loop across ten families:
+of the design tool is registered on `document.modelContext.registerTool()` — **18 tools**
+covering the whole creative loop across eleven families:
 
 - **Designs**: `create-design`, `duplicate-design`, `list-designs`, `get-design-state`
 - **Elements**: `add-text`, `edit-element`, `remove-element`
@@ -24,6 +24,12 @@ covering the whole creative loop across ten families:
 - **Style + export**: `restyle-design`, `export-design` (PNG/JPEG 1x/2x)
 - **Consent**: `approve-batch`, `undo`
 - **Memory**: `remember-preference`, `recall-preference`
+- **Drafting**: `draft-variants` — N independent takes (headline, tagline, palette,
+  concept) fanned out CONCURRENTLY through the text lane, so the agent offers the
+  human options instead of one draft. Measured on this fleet: 16 concurrent
+  completions in 1.6 s wall against 0.5-1.3 s for one, so 3-6 takes cost about as
+  much as one. Read-only — a chosen variant is applied with `add-text` and still
+  goes through the pending batch.
 - **Production**: `production-log` — the studio's week-long production
   ledger, readable by any agent: days, total pieces, last run's health
 

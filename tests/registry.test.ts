@@ -60,10 +60,11 @@ const ALWAYS_ON = [
   // always registered, call-time guards answer "no design exists".
   'iris-generate',
   'mediaforge-remove-bg',
-  // P2.3: the Dark Matters production exhibit — the log is read-only and
+  // P2.3: the production exhibit — the log is read-only and
   // always available, so the agent can ask "what has the studio produced?"
   // on a fresh page with no design.
   'production-log',
+  'draft-variants',
 ];
 const DESIGN_ONLY = [
   'add-text',
