@@ -29,7 +29,7 @@ export function StatusBar() {
   const surface = status?.surface ?? 'off';
   const badgeClass = surface === 'real' ? 'badge badge-real' : surface === 'polyfill' ? 'badge badge-polyfill' : 'badge badge-off';
   const badgeText =
-    surface === 'real' ? 'WebMCP: on (real API)' : surface === 'polyfill' ? 'WebMCP: polyfill (dev shim)' : 'WebMCP: off';
+    surface === 'real' ? 'WebMCP: on (real API)' : surface === 'polyfill' ? 'WebMCP: polyfill (native API not enabled — chrome://flags/#enable-webmcp-testing)' : 'WebMCP: off';
 
   const failures = status?.failures ?? [];
 

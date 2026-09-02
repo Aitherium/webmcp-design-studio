@@ -31,17 +31,20 @@ export const STORAGE_KEY = 'webmcp.imageProvider';
 /**
  * The studio's hosted image lane. On the PUBLIC hosts (studio.aitherium.com —
  * GitHub Pages, which rejects POSTs — and studio-preview, a static nginx)
- * the lane is CROSS-ORIGIN to studio-api.aitherium.com (the tunnel route →
- * aither-create → media-forge canvas_compat → Sana, sync images, CORS
- * allowlisted in AitherCreate/src/middleware.ts; measured live 2026-08-30:
- * /api/generate answered 200 with an image after the D-192 dead-name fix).
+ * the lane is CROSS-ORIGIN to studio-preview.aitherium.com/api/image — the
+ * studio's own nginx, which rewrites /api/image/generate to Sana's /v1/generate
+ * and answers the CORS preflight (measured 2026-09-02: 200 with an image in
+ * ~6 s). It WAS studio-api.aitherium.com (aither-create → media-forge → Sana),
+ * which took ~171 s end to end and hit Cloudflare's 100 s cut as a 524 on every
+ * judge-facing generate (measured 2026-09-01, 3 of 3). Same host the chat lane
+ * already uses (hostedChat.ts).
  * Localhost dev keeps the same-origin nginx proxy → AitherSana.
  */
 export const FLEET_DEFAULT_BASE =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'studio.aitherium.com' ||
     window.location.hostname === 'studio-preview.aitherium.com')
-    ? 'https://studio-api.aitherium.com/api'
+    ? 'https://studio-preview.aitherium.com/api/image'
     : '/api/image/';
 
 /** Origin-aware first-visit default — mirrors the text agent's default
