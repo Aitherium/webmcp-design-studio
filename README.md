@@ -54,7 +54,7 @@ npm run build    # static export for GitHub Pages
 ```mermaid
 flowchart LR
   A[Agent: ChatGPT browser / Chrome+flag / in-page agent] -- getTools / executeTool --> M[document.modelContext<br/>native or polyfill]
-  M --> R[ToolRegistry<br/>17 tools + toolchange]
+  M --> R[ToolRegistry<br/>18 tools + toolchange]
   R --> S[Design store<br/>pending batch -> approve-batch -> committed]
   S --> C[fabric canvas + export]
   R -- generate-image --> I[studio proxy -> Sana]
