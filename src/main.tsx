@@ -7,12 +7,14 @@ import { installModelContextPolyfill } from './webmcp/polyfill';
 import { detectSurface, ToolRegistry } from './webmcp/registry';
 import { getStudioStore } from './state/store';
 import { computeEmbed, markEmbedChrome } from './embed';
+import { installEmbedBridge } from './embedBridge';
 import './dev/scriptedAgent'; // window.__judgeScript()
 
 // Embed mode (framed in the Community Canvas, or ?embed=1): strip the app
 // chrome so the studio reads as part of the hosting page. The standalone
 // surface is untouched when not embedded.
-markEmbedChrome(computeEmbed());
+const embedded = computeEmbed();
+markEmbedChrome(embedded);
 
 /**
  * WebMCP bootstrap:
@@ -22,6 +24,9 @@ markEmbedChrome(computeEmbed());
  *    change — tools appear/disappear as design state changes.
  */
 installModelContextPolyfill();
+// Framed (the playground): let the host page proxy our tools onto its own
+// document.modelContext. Standalone installs nothing.
+if (embedded) installEmbedBridge();
 const registry = new ToolRegistry(detectSurface, {
   onStatus: (status) => getStudioStore().getState().setWebMCPStatus(status),
   onToolsChanged: (names) => getStudioStore().getState().setLiveTools(names),

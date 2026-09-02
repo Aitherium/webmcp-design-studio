@@ -16,14 +16,32 @@
  * 92–271s at 1024², so the loader shows progress while it waits) — with the
  * normalize step accepting the shapes real providers actually return.
  */
-export type ImageProviderId = 'on-device' | 'fleet' | 'custom';
+export type ImageProviderId = 'on-device' | 'fleet' | 'custom' | 'openai';
 
 export interface ImageProviderConfig {
   id: ImageProviderId;
   /** base URL for `fleet`/`custom`; trailing slash allowed, stripped on use. */
   baseUrl?: string;
-  /** sent as `X-API-Key` on every request when set (custom providers). */
+  /** sent as `X-API-Key` on every request when set (custom providers);
+   * as `Authorization: Bearer` for the OpenAI-compatible lane. */
   apiKey?: string;
+  /** OpenAI-compatible lane only: the image model (default gpt-image-1). */
+  model?: string;
+}
+
+/** Bring-your-own-key lane: any `/v1/images/generations` server (OpenAI,
+ * Azure OpenAI, or a compatible gateway). Added 2026-09-02 so a visitor can
+ * keep generating when the studio's fleet lane is slow or down. */
+export const OPENAI_DEFAULT_BASE = 'https://api.openai.com/v1';
+export const OPENAI_DEFAULT_MODEL = 'gpt-image-1';
+
+/** The sizes the OpenAI images API accepts, chosen by aspect. gpt-image-* and
+ * dall-e-3 disagree on the portrait/landscape edge, so pick per model. */
+export function openAiSizeFor(width: number, height: number, model: string): string {
+  const dalle = /dall-e/i.test(model);
+  if (Math.abs(width - height) < Math.max(width, height) * 0.15) return '1024x1024';
+  if (height > width) return dalle ? '1024x1792' : '1024x1536';
+  return dalle ? '1792x1024' : '1536x1024';
 }
 
 export const STORAGE_KEY = 'webmcp.imageProvider';
@@ -88,7 +106,7 @@ export function loadProviderConfig(): ImageProviderConfig {
     if (parsed.id !== 'on-device' && parsed.id !== 'fleet' && parsed.id !== 'custom') {
       return defaultImageConfig();
     }
-    return { id: parsed.id, baseUrl: parsed.baseUrl, apiKey: parsed.apiKey };
+    return { id: parsed.id, baseUrl: parsed.baseUrl, apiKey: parsed.apiKey, model: parsed.model };
   } catch {
     return defaultImageConfig();
   }
@@ -142,17 +160,39 @@ async function abortableFetch(
 export async function syncGenerateImage(
   providerBase: string,
   request: SyncGenerateRequest,
-  options?: { apiKey?: string; signal?: AbortSignal; timeoutMs?: number },
+  options?: { apiKey?: string; signal?: AbortSignal; timeoutMs?: number; flavor?: 'aither' | 'openai'; model?: string },
 ): Promise<SyncGenerateResult> {
   const base = baseUrl(providerBase);
   const { signal } = options ?? {};
   const timeoutMs = options?.timeoutMs ?? 300_000;
   const seed = request.seed ?? Math.floor(Math.random() * 2 ** 31);
   const startedAt = performance.now();
+  const flavor = options?.flavor ?? 'aither';
 
-  const url = `${base}/generate`;
+  const url = flavor === 'openai' ? `${base}/images/generations` : `${base}/generate`;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (options?.apiKey) headers['x-api-key'] = options.apiKey;
+  if (options?.apiKey) {
+    if (flavor === 'openai') headers.authorization = `Bearer ${options.apiKey}`;
+    else headers['x-api-key'] = options.apiKey;
+  }
+  const model = options?.model || OPENAI_DEFAULT_MODEL;
+  // gpt-image-* always returns b64_json and REJECTS response_format; dall-e needs it.
+  const requestBody =
+    flavor === 'openai'
+      ? {
+          model,
+          prompt: request.prompt,
+          n: 1,
+          size: openAiSizeFor(request.width, request.height, model),
+          ...(/dall-e/i.test(model) ? { response_format: 'b64_json' } : {}),
+        }
+      : {
+          prompt: request.prompt,
+          negative_prompt: request.negative_prompt,
+          width: request.width,
+          height: request.height,
+          seed,
+        };
 
   let resp: Response;
   try {
@@ -161,13 +201,7 @@ export async function syncGenerateImage(
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          prompt: request.prompt,
-          negative_prompt: request.negative_prompt,
-          width: request.width,
-          height: request.height,
-          seed,
-        }),
+        body: JSON.stringify(requestBody),
       },
       signal,
       timeoutMs,
@@ -212,6 +246,7 @@ export async function syncGenerateImage(
  *   {result: {image|dataUrl|url}}     nested wrappers
  *   {result: {images: [...]}}         media-forge canvas_compat (D-192, live 08-30)
  *   {url}                             a URL the provider wants us to fetch
+ *   {data: [{b64_json | url}]}        the OpenAI images API (BYOK lane, 2026-09-02)
  *
  * A bare base64 payload (no `data:` prefix — media-forge returns raw bytes)
  * is WRAPPED, never fetched: urlToDataUrl would try to fetch "iVBORw0…" as a
@@ -233,6 +268,7 @@ export async function normalizeImageResponse(
     dataUrl?: unknown;
     url?: unknown;
     result?: { image?: unknown; dataUrl?: unknown; url?: unknown; images?: unknown };
+    data?: Array<{ b64_json?: unknown; url?: unknown }>;
   };
 
   if (b.success === false) {
@@ -242,7 +278,13 @@ export async function normalizeImageResponse(
     throw new Error(`image generation failed: ${String(b.error)}`);
   }
 
-  const candidate = firstImage(b);
+  const openai = Array.isArray(b.data) && b.data.length > 0 ? b.data[0] : null;
+  const candidate =
+    openai && typeof openai.b64_json === 'string' && openai.b64_json
+      ? openai.b64_json
+      : openai && typeof openai.url === 'string' && openai.url
+        ? openai.url
+        : firstImage(b);
   if (typeof candidate === 'string' && candidate.length > 0) {
     if (candidate.startsWith('data:')) return candidate;
     if (isBareBase64(candidate)) return `data:image/png;base64,${candidate}`;

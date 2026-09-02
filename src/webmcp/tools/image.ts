@@ -290,7 +290,12 @@ export const generateImageTool: ToolDefinition = {
             syncGenerateImage(
               url,
               { prompt, width: localDims.width, height: localDims.height, seed: actualSeed },
-              { apiKey: config.apiKey, signal },
+              {
+                apiKey: config.apiKey,
+                signal,
+                flavor: config.id === 'openai' ? 'openai' : 'aither',
+                model: config.model,
+              },
             ),
           ) as Promise<{ dataUrl: string; thumbnail?: string; elapsedMs: number; seed: number }>;
         try {

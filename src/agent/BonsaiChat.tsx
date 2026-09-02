@@ -34,6 +34,8 @@ import {
 } from './loop';
 import {
   FLEET_DEFAULT_BASE,
+  OPENAI_DEFAULT_BASE,
+  OPENAI_DEFAULT_MODEL,
   loadProviderConfig,
   saveProviderConfig,
   type ImageProviderConfig,
@@ -472,24 +474,34 @@ export function BonsaiChat() {
           <option value="on-device">On-device (WebGPU)</option>
           <option value="fleet">Fleet — Sana txt2img (the /v1/generate lane)</option>
           <option value="custom">Custom — Sana / ComfyUI / SD</option>
+          <option value="openai">Bring your own key — OpenAI-compatible images (gpt-image-1 / DALL·E)</option>
         </select>
         {provider.id !== 'on-device' && (
           <input
             className="agent-backendurl"
-            value={provider.baseUrl ?? (provider.id === 'fleet' ? FLEET_DEFAULT_BASE : '')}
-            placeholder={provider.id === 'fleet' ? FLEET_DEFAULT_BASE : 'http://host:port'}
+            value={provider.baseUrl ?? (provider.id === 'fleet' ? FLEET_DEFAULT_BASE : provider.id === 'openai' ? OPENAI_DEFAULT_BASE : '')}
+            placeholder={provider.id === 'fleet' ? FLEET_DEFAULT_BASE : provider.id === 'openai' ? OPENAI_DEFAULT_BASE : 'http://host:port'}
             onChange={(e) => updateProvider({ baseUrl: e.target.value })}
             aria-label="image backend base URL"
           />
         )}
-        {provider.id === 'custom' && (
+        {(provider.id === 'custom' || provider.id === 'openai') && (
           <input
             className="agent-backendkey"
             type="password"
             value={provider.apiKey ?? ''}
-            placeholder="API key (optional)"
+            placeholder={provider.id === 'openai' ? 'sk-… (stays in this browser)' : 'API key (optional)'}
             onChange={(e) => updateProvider({ apiKey: e.target.value })}
             aria-label="image backend API key"
+          />
+        )}
+        {provider.id === 'openai' && (
+          <input
+            className="agent-backendurl"
+            value={provider.model ?? ''}
+            placeholder={OPENAI_DEFAULT_MODEL}
+            onChange={(e) => updateProvider({ model: e.target.value })}
+            aria-label="image backend model"
           />
         )}
       </div>
