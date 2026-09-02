@@ -52,12 +52,33 @@ export interface CompleteOnceOptions {
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
+  /** Ask a reasoning model to answer directly. Defaults to true on the FLEET
+   * lanes and false for a visitor's own endpoint — see the note below. */
+  disableThinking?: boolean;
 }
+
+/**
+ * The fleet's Bonsai is a REASONING model: at a small budget it spends the
+ * whole allowance in `reasoning_content` and returns EMPTY content, which
+ * reads as "the tool is broken". Measured 2026-09-02 against the live lane
+ * asking for one headline:
+ *
+ *   max_tokens=60  plain                  → 31.9 s, content '', 209 reasoning chars
+ *   max_tokens=60  reasoning_budget=0     →  2.4 s, content '', 216   (flag ignored)
+ *   max_tokens=900 plain                  → 55.2 s, content '', 3031  (still thinking)
+ *   max_tokens=60  enable_thinking=false  →  0.8 s, "Spring Sale: Clean Up, Clear Space…"
+ *
+ * So the fix is the template kwarg, not a bigger budget. It is sent ONLY to
+ * the fleet lanes (llama.cpp and vLLM both accept it); a visitor's BYOK
+ * endpoint may be OpenAI proper, which rejects unknown body fields.
+ */
+const THINKING_OFF = { chat_template_kwargs: { enable_thinking: false } } as const;
 
 /** POST one chat completion and return its message text. Throws with the hop
  * named on any failure — a caller fanning out needs to know WHICH one died. */
 export async function completeOnce(opts: CompleteOnceOptions): Promise<string> {
   const { lane, prompt, system, maxTokens = 220, temperature = 0.9, signal } = opts;
+  const noThink = opts.disableThinking ?? lane.resolvedFrom !== 'custom';
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (lane.apiKey) headers.Authorization = `Bearer ${lane.apiKey}`;
   const messages = system
@@ -68,7 +89,14 @@ export async function completeOnce(opts: CompleteOnceOptions): Promise<string> {
     res = await fetch(lane.url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: lane.model, messages, max_tokens: maxTokens, temperature, stream: false }),
+      body: JSON.stringify({
+        model: lane.model,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        stream: false,
+        ...(noThink ? THINKING_OFF : {}),
+      }),
       signal,
     });
   } catch (err) {
@@ -91,7 +119,7 @@ export async function completeOnce(opts: CompleteOnceOptions): Promise<string> {
   const thought = typeof choice?.reasoning_content === 'string' ? choice.reasoning_content.trim() : '';
   throw new Error(
     thought
-      ? 'the model spent its whole token budget reasoning and returned no answer — raise max_tokens'
+      ? 'the model reasoned instead of answering and returned nothing — this lane needs chat_template_kwargs.enable_thinking=false (raising max_tokens does not help)'
       : 'the text lane returned no message content',
   );
 }

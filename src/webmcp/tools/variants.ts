@@ -36,8 +36,8 @@ export const MAX_VARIANTS = 6;
 
 /** What each kind asks for, and how long an answer may be. */
 const KIND_BRIEF: Record<VariantKind, { ask: string; maxTokens: number }> = {
-  headline: { ask: 'ONE punchy headline (max 6 words, no quotes, no explanation)', maxTokens: 60 },
-  tagline: { ask: 'ONE supporting line of at most 12 words (no quotes, no explanation)', maxTokens: 70 },
+  headline: { ask: 'ONE punchy headline (max 6 words, no quotes, no explanation)', maxTokens: 80 },
+  tagline: { ask: 'ONE supporting line of at most 12 words (no quotes, no explanation)', maxTokens: 90 },
   palette: {
     ask: 'ONE colour direction as `#RRGGBB, #RRGGBB, #RRGGBB — two-word mood`, nothing else',
     maxTokens: 60,

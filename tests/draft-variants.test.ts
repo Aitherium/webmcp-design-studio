@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { draftVariantsTool, variantInstruction } from '../src/webmcp/tools/variants';
+import { completeOnce } from '../src/agent/completeOnce';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -96,11 +97,45 @@ describe('draft-variants', () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: '', reasoning_content: 'thinking…' } }] }), { status: 200 })));
     const out = await draftVariantsTool.execute({ brief: 'x', count: 2 }, { signal: new AbortController().signal });
-    expect(textOf(out)).toContain('token budget reasoning');
+    expect(textOf(out)).toContain('enable_thinking=false');
   });
 
   it('varies the angle per take', () => {
     expect(variantInstruction('headline', 0, 3)).not.toBe(variantInstruction('headline', 1, 3));
     expect(variantInstruction('palette', 0, 2)).toContain('#RRGGBB');
+  });
+});
+
+describe('reasoning models', () => {
+  it('asks the FLEET lane not to think (measured: 0.8 s answer vs 31.9 s of empty content)', async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'HEADLINE' } }] }), { status: 200 });
+    }));
+    await draftVariantsTool.execute({ brief: 'x', count: 2 }, { signal: new AbortController().signal });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it('does NOT send it to a visitor\'s own endpoint — OpenAI rejects unknown body fields', async () => {
+    let body: Record<string, unknown> = {};
+    const capture = vi.fn(async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'HEADLINE' } }] }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', capture);
+    await completeOnce({
+      lane: { url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', apiKey: 'sk-x', resolvedFrom: 'custom' },
+      prompt: 'one headline',
+    });
+    expect(body.chat_template_kwargs).toBeUndefined();
+    expect((capture.mock.calls[0][1].headers as Record<string, string>).Authorization).toBe('Bearer sk-x');
+
+    // …and the fleet lane still gets it.
+    await completeOnce({
+      lane: { url: 'https://fleet/v1/chat/completions', model: 'bonsai-27b', resolvedFrom: 'fleet' },
+      prompt: 'one headline',
+    });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
   });
 });
