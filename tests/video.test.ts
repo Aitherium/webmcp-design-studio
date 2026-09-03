@@ -50,12 +50,12 @@ afterEach(() => {
 });
 
 describe('registration', () => {
-  it('both tools are in the registry and the count is 21', () => {
+  it('both tools are in the registry and the count is 23 (21 + demo-credits + gpu-burst, lane 3)', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('render-video');
     expect(names).toContain('video-status');
     expect(VIDEO_TOOLS).toHaveLength(2);
-    expect(TOOL_DEFINITIONS).toHaveLength(21);
+    expect(TOOL_DEFINITIONS).toHaveLength(23);
   });
 });
 

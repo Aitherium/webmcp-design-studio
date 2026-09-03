@@ -48,6 +48,8 @@ import {
   type TextAgentMode,
 } from './textAgentConfig';
 import { unwrapToolResponse } from './scripted';
+import { meterHostedTurn } from '../demo/credits';
+import { CreditsMeter } from '../demo/CreditsMeter';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -145,6 +147,9 @@ export function BonsaiChat() {
   const [chosenModel, setChosenModel] = useState<string | null>(null);
   /** Hosted lane engaged (no consent needed — no model loads on this device). */
   const [hostedActive, setHostedActive] = useState(false);
+  /** The demo governor refused the last hosted turn (402) — its `fix` text.
+   * While set, the panel offers the two unmetered lanes (lane 3, 2026-09-03). */
+  const [creditsFix, setCreditsFix] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** True while the latest output is streaming into an agent bubble (no final push). */
   const agentStreamingRef = useRef(false);
@@ -289,6 +294,20 @@ export function BonsaiChat() {
     setAgent({ phase: 'generating', lastError: null });
 
     try {
+      // Demo credits (lane 3, 2026-09-03): one `turn` is debited BEFORE a
+      // hosted (fleet) turn goes out; a 402 means the request is never sent
+      // and the server's own `fix` text names the way forward. On-device and
+      // BYOK turns pass through unmetered (meterHostedTurn is a no-op there).
+      const gate = await meterHostedTurn(textAgent.mode);
+      if (!gate.allowed) {
+        setCreditsFix(gate.fix);
+        push({
+          role: 'system',
+          text: `Demo credits exhausted — ${gate.fix}. Pick "On-device (WebGPU)" or "Custom — your own API key" under Text agent (or the buttons below) and send again.`,
+        });
+        return;
+      }
+      setCreditsFix(null);
       let message = userMessage;
       for (let attempt = 0; ; attempt++) {
         const executor = createToolExecutor({
@@ -460,7 +479,33 @@ export function BonsaiChat() {
           <span className="tier tier-unknown">detecting device…</span>
         )}
         {agent.slot && <span className="agent-slot">slot: {agent.slot}</span>}
+        {hostedLaneAvailable && <CreditsMeter />}
       </div>
+
+      {/* Demo credits refused the last hosted turn — offer the two unmetered lanes. */}
+      {creditsFix && (
+        <div className="credits-exhausted" role="status" aria-label="demo credits exhausted">
+          <span className="credits-exhausted-text">Demo credits exhausted — {creditsFix}.</span>
+          <button
+            className="chip"
+            onClick={() => {
+              updateTextAgent({ mode: 'on-device' });
+              setCreditsFix(null);
+            }}
+          >
+            Use the on-device brain
+          </button>
+          <button
+            className="chip"
+            onClick={() => {
+              updateTextAgent({ mode: 'custom' });
+              setCreditsFix(null);
+            }}
+          >
+            Bring your own key
+          </button>
+        </div>
+      )}
 
       {/* Image backend — provider panel (works on every tier, persisted) */}
       <div className="agent-backend" role="group" aria-label="image backend">
