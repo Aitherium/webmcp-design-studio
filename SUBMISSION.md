@@ -13,8 +13,8 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 WebMCP's promise is that a website *declares* what agents can do instead of forcing
 agents to guess. The studio is built entirely around that declaration: every capability
-of the design tool is registered on `document.modelContext.registerTool()` — **18 tools**
-covering the whole creative loop across eleven families:
+of the design tool is registered on `document.modelContext.registerTool()` — **21 tools**
+covering the whole creative loop across twelve families:
 
 - **Designs**: `create-design`, `duplicate-design`, `list-designs`, `get-design-state`
 - **Elements**: `add-text`, `edit-element`, `remove-element`
@@ -23,6 +23,10 @@ covering the whole creative loop across eleven families:
   (BiRefNet background removal, three hops through the platform)
 - **Style + export**: `restyle-design`, `export-design` (PNG/JPEG 1x/2x)
 - **Consent**: `approve-batch`, `undo`
+- **Video**: `render-video`, `video-status` — the designs become a narrated MP4 through
+  the platform's render lane (Remotion + TTS). Renders are queued on awrun, the
+  platform's priority queue, so many designs render in parallel on burst workers and
+  the agent polls for the URL instead of waiting on a request.
 - **Memory**: `remember-preference`, `recall-preference`
 - **Drafting**: `draft-variants` — N independent takes (headline, tagline, palette,
   concept) fanned out CONCURRENTLY through the text lane, so the agent offers the

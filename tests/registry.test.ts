@@ -66,6 +66,10 @@ const ALWAYS_ON = [
   'production-log',
   'draft-variants',
   'search-preferences',
+  // The VIDEO lane (2026-09-03): always registered, call-time guard answers
+  // "no design exists"; video-status needs no design at all.
+  'render-video',
+  'video-status',
 ];
 const DESIGN_ONLY = [
   'add-text',

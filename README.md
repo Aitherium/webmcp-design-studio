@@ -10,7 +10,7 @@ and social posts on a live canvas, through [WebMCP](https://github.com/webmachin
 
 The page registers its capabilities as in-page tools via
 `document.modelContext.registerTool()` — tools like `create-design`, `add-text`,
-`edit-element`, `generate-image`, `restyle-design`, `export-design`. Any WebMCP-capable
+`edit-element`, `generate-image`, `restyle-design`, `export-design`, `render-video`. Any WebMCP-capable
 agent (ChatGPT's in-app browser, Chrome's agent, or the studio's own on-device agent)
 discovers them, and then a human + agent can collaborate:
 
@@ -54,7 +54,7 @@ npm run build    # static export for GitHub Pages
 ```mermaid
 flowchart LR
   A[Agent: ChatGPT browser / Chrome+flag / in-page agent] -- getTools / executeTool --> M[document.modelContext<br/>native or polyfill]
-  M --> R[ToolRegistry<br/>18 tools + toolchange]
+  M --> R[ToolRegistry<br/>21 tools + toolchange]
   R --> S[Design store<br/>pending batch -> approve-batch -> committed]
   S --> C[fabric canvas + export]
   R -- generate-image --> I[studio proxy -> Sana]

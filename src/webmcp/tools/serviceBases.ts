@@ -40,3 +40,17 @@ export function normalizeServiceImage(image: unknown): string | null {
   }
   return null;
 }
+
+/**
+ * VIDEO lane (2026-09-03): render-video / video-status. The relay is the
+ * studio's own nginx (`/api/video/` → the awrun-backed intake on the host),
+ * reached cross-origin from the public origins via studio-preview — the same
+ * lane shape as `/api/image/`. Renders are QUEUED (202 + job_id) and polled;
+ * a Cloudflare 100 s edge limit never sees a long request.
+ */
+export const VIDEO_BASE =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'studio.aitherium.com' ||
+    window.location.hostname === 'studio-preview.aitherium.com')
+    ? 'https://studio-preview.aitherium.com/api/video'
+    : '/api/video/';

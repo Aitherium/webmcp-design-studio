@@ -17,6 +17,7 @@ import { ELEMENT_TOOLS } from './elements';
 import { IMAGE_TOOLS } from './image';
 import { IRIS_TOOLS } from './iris';
 import { MEDIAFORGE_TOOLS } from './mediaforge';
+import { VIDEO_TOOLS } from './video';
 import { STYLE_TOOLS } from './style';
 import { BATCH_TOOLS } from './batch';
 import { EXPORT_TOOLS } from './export';
@@ -39,6 +40,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   ...IMAGE_TOOLS, // generate-image
   ...IRIS_TOOLS, // iris-generate — the autonomous pipeline
   ...MEDIAFORGE_TOOLS, // mediaforge-remove-bg — the cutout
+  ...VIDEO_TOOLS, // render-video, video-status — narrated MP4 through the awrun-queued render lane (2026-09-03)
   ...STYLE_TOOLS, // restyle-design
   ...EXPORT_TOOLS, // export-design
 ];
