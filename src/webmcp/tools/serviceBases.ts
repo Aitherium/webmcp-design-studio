@@ -11,18 +11,22 @@
  *   (studio-static-default.conf, upstreams aitheros-iris:8786 and
  *   aitheros-mediaforge:8200).
  */
+// 2026-09-03: studio-api.aitherium.com (aither-create) is gone -- its relay routes were swept
+// from develop and the container is not running (502 on every path). The preview origin's
+// nginx relays /api/iris/ and /api/mediaforge/ with CORS for studio.aitherium.com, so both
+// tools ride the same origin the hosted chat lane already uses.
 export const IRIS_BASE =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'studio.aitherium.com' ||
     window.location.hostname === 'studio-preview.aitherium.com')
-    ? 'https://studio-api.aitherium.com/api/iris'
+    ? 'https://studio-preview.aitherium.com/api/iris'
     : '/api/iris/';
 
 export const MEDIAFORGE_BASE =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'studio.aitherium.com' ||
     window.location.hostname === 'studio-preview.aitherium.com')
-    ? 'https://studio-api.aitherium.com/api/mediaforge'
+    ? 'https://studio-preview.aitherium.com/api/mediaforge'
     : '/api/mediaforge/';
 
 /** Normalize a service image payload to a data URL — the same shapes the
