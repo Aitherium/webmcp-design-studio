@@ -13,8 +13,8 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 WebMCP's promise is that a website *declares* what agents can do instead of forcing
 agents to guess. The studio is built entirely around that declaration: every capability
-of the design tool is registered on `document.modelContext.registerTool()` — **21 tools**
-covering the whole creative loop across twelve families:
+of the design tool is registered on `document.modelContext.registerTool()` — **32 tools**
+covering the whole creative loop across fourteen families:
 
 - **Designs**: `create-design`, `duplicate-design`, `list-designs`, `get-design-state`
 - **Elements**: `add-text`, `edit-element`, `remove-element`
@@ -27,7 +27,21 @@ covering the whole creative loop across twelve families:
   the platform's render lane (Remotion + TTS). Renders are queued on awrun, the
   platform's priority queue, so many designs render in parallel on burst workers and
   the agent polls for the URL instead of waiting on a request.
-- **Memory**: `remember-preference`, `recall-preference`
+- **Media pipeline (ComfyUI behind MediaForge)**: `mediaforge-upscale`, `-enhance`,
+  `-restyle` (preset catalog read live), `-relight`, `-outpaint`, `-critique` (read-only
+  design critique), `-storyboard` (plans, then renders one shot per request), `-animate`
+  (WAN image-to-video, async: the tool polls the job plane so nothing crosses the edge's
+  100-second cut) and `-job-status`. Every result lands as a NEW canvas element beside its
+  source — the source is never mutated — and `animate` introduces a `video` element type
+  whose poster frame is captured in the tab.
+- **Demo credits + GPU burst**: `demo-credits` and `gpu-burst`. Every visitor gets a fixed
+  allowance (30 hosted turns / $0.50); the hosted chat lane debits a turn BEFORE it sends,
+  and when the allowance is gone the refusal names the two free lanes (on-device brain,
+  bring-your-own-key). `gpu-burst` rents a cloud GPU for ComfyUI through the platform's
+  governor — under the owner's daily cap, at a price ceiling, torn down after twenty idle
+  minutes — so a stranger can spin heavy media work up on demand and cannot run up a bill.
+- **Memory**: `remember-preference`, `recall-preference`, `search-preferences` (recall by
+  meaning with an embedder trained for this studio, running in the tab)
 - **Drafting**: `draft-variants` — N independent takes (headline, tagline, palette,
   concept) fanned out CONCURRENTLY through the text lane, so the agent offers the
   human options instead of one draft. Measured on this fleet: 16 concurrent
@@ -95,6 +109,11 @@ legible, not magic.
   `mediaforge-remove-bg` chains a BiRefNet cutout onto any generated image: the agent
   can produce finished, composited artwork — a hero image with a transparent cutout —
   in one turn, with the whole chain visible in the protocol feed.
+- **The whole media pipeline, governed** — nine `mediaforge-*` tools put ComfyUI
+  (upscale, enhance, restyle, relight, outpaint, critique, storyboard, image-to-video)
+  one tool call away from any agent, and the demo governor makes that safe to hand to
+  strangers: per-visitor credits, a capped on-demand GPU burst, and a refusal that names
+  the free lanes instead of a dead button.
 
 ## How WebMCP is implemented
 
