@@ -1,1917 +1,54 @@
-/* webmcp-studio-runtime — generated bundle */
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};function isRetriableStatus(status) {
-  return status === 408 || status === 429 || status >= 500;
-}
-function httpRangeFetcher(url) {
-  return async (start, endInclusive) => {
-    const mb = ((endInclusive - start + 1) / 1048576).toFixed(1);
-    let lastError = "";
-    for (let attempt = 1; attempt <= MAX_RANGE_ATTEMPTS; attempt++) {
-      const controller = new AbortController();
-      let stalled = false;
-      const armWatchdog = () => setTimeout(() => {
-        stalled = true;
-        controller.abort();
-      }, RANGE_STALL_TIMEOUT_MS);
-      let watchdog = armWatchdog();
-      const bumpWatchdog = () => {
-        clearTimeout(watchdog);
-        watchdog = armWatchdog();
-      };
-      try {
-        let res;
-        try {
-          res = await fetch(url, {
-            headers: { Range: `bytes=${start}-${endInclusive}` },
-            cache: "force-cache",
-            signal: controller.signal
-          });
-        } catch (e) {
-          lastError = e instanceof Error ? e.message : String(e);
-          if (stalled) {
-            lastError = `stalled (no response for ${RANGE_STALL_TIMEOUT_MS / 1e3}s)`;
-          }
-          if (attempt < MAX_RANGE_ATTEMPTS) {
-            await sleep(250 * 2 ** (attempt - 1));
-            continue;
-          }
-          const offline = typeof navigator !== "undefined" && navigator.onLine === false;
-          throw new Error(
-            `bonsai-gguf: fetch failed for ${mb} MB range ${start}-${endInclusive} of ${url} after ${MAX_RANGE_ATTEMPTS} attempts${offline ? " (browser reports OFFLINE)" : ""}. ` + (stalled ? `The server accepted the connection but never answered (stalled ${RANGE_STALL_TIMEOUT_MS / 1e3}s). ` : "") + `If the screen also flickered, the GPU driver reset and took this request with it \u2014 that is a GPU fault, not a network one. Last error: ${lastError}`
-          );
-        }
-        if (res.status !== 206 && res.status !== 200) {
-          lastError = `HTTP ${res.status}`;
-          if (isRetriableStatus(res.status) && attempt < MAX_RANGE_ATTEMPTS) {
-            await sleep(250 * 2 ** (attempt - 1));
-            continue;
-          }
-          throw new Error(
-            `bonsai-gguf: range GET ${start}-${endInclusive} (${mb} MB) of ${url} returned ${res.status}`
-          );
-        }
-        try {
-          const body = res.body;
-          if (!body) return new Uint8Array(await res.arrayBuffer());
-          const reader = body.getReader();
-          const chunks = [];
-          let total = 0;
-          for (; ; ) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              bumpWatchdog();
-              chunks.push(value);
-              total += value.byteLength;
-            }
-          }
-          const out = new Uint8Array(total);
-          let off = 0;
-          for (const c of chunks) {
-            out.set(c, off);
-            off += c.byteLength;
-          }
-          return out;
-        } catch (e) {
-          if (stalled) {
-            lastError = `stalled mid-body (no progress for ${RANGE_STALL_TIMEOUT_MS / 1e3}s)`;
-            if (attempt < MAX_RANGE_ATTEMPTS) {
-              await sleep(250 * 2 ** (attempt - 1));
-              continue;
-            }
-            throw new Error(
-              `bonsai-gguf: range GET ${start}-${endInclusive} (${mb} MB) of ${url} stalled mid-body (no progress for ${RANGE_STALL_TIMEOUT_MS / 1e3}s) after ${MAX_RANGE_ATTEMPTS} attempts. Last error: ${lastError}`
-            );
-          }
-          throw new Error(
-            `bonsai-gguf: reading ${mb} MB range body failed (device out of memory?): ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-      } finally {
-        clearTimeout(watchdog);
-      }
-    }
-    throw new Error(`bonsai-gguf: range ${start}-${endInclusive} exhausted retries: ${lastError}`);
-  };
-}
-function mirroredRangeFetcher(urls) {
-  const list = urls.filter(Boolean);
-  if (list.length === 0) throw new Error("bonsai-gguf: mirroredRangeFetcher needs at least one URL");
-  if (list.length === 1) return httpRangeFetcher(list[0]);
-  const fetchers = list.map((u) => httpRangeFetcher(u));
-  return async (start, endInclusive) => {
-    const failures = [];
-    for (let i = 0; i < fetchers.length; i++) {
-      try {
-        return await fetchers[i](start, endInclusive);
-      } catch (e) {
-        failures.push(`${list[i]}: ${e instanceof Error ? e.message : String(e)}`);
-        if (i + 1 < fetchers.length) {
-          console.warn(`[bonsai-gguf] mirror ${i + 1}/${fetchers.length} failed, trying next`);
-        }
-      }
-    }
-    throw new Error(
-      `bonsai-gguf: all ${fetchers.length} mirrors failed for range ${start}-${endInclusive}:
-` + failures.map((f, i) => `  [${i + 1}] ${f}`).join("\n")
-    );
-  };
-}
-var MAX_RANGE_ATTEMPTS, sleep, RANGE_STALL_TIMEOUT_MS, RangeReader;
-var init_reader = __esm({
-  "m0"() {
-    "use strict";
-    MAX_RANGE_ATTEMPTS = 3;
-    sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    RANGE_STALL_TIMEOUT_MS = 2e4;
-    RangeReader = class {
-      constructor(init) {
-        /** Absolute file offset that byte 0 of `buf` corresponds to (we always anchor at 0). */
-        this.filled = 0;
-        // bytes valid from absolute 0
-        this.cursor = 0;
-        this.url = init.url;
-        this.fetchRange = init.fetchRange ?? httpRangeFetcher(init.url);
-        this.contentLength = init.contentLength;
-        this.initialWindow = init.initialWindow ?? 1 << 20;
-        this.buf = new Uint8Array(0);
-      }
-      get position() {
-        return this.cursor;
-      }
-      /** Ensure absolute bytes [0, need) are resident, range-fetching more as required. */
-      async ensure(need) {
-        if (need <= this.filled) return;
-        let target = Math.max(need, this.filled + this.initialWindow);
-        if (this.contentLength !== void 0) target = Math.min(target, this.contentLength);
-        const chunk = await this.fetchRange(this.filled, target - 1);
-        const next = new Uint8Array(this.filled + chunk.length);
-        next.set(this.buf.subarray(0, this.filled), 0);
-        next.set(chunk, this.filled);
-        this.buf = next;
-        this.filled += chunk.length;
-        if (this.filled < need) {
-          throw new Error(
-            `bonsai-gguf: underfilled window (have ${this.filled}, need ${need}) \u2014 server may not support ranges`
-          );
-        }
-      }
-      async view(len) {
-        await this.ensure(this.cursor + len);
-        return new DataView(this.buf.buffer, this.buf.byteOffset + this.cursor, len);
-      }
-      async u8() {
-        const v = (await this.view(1)).getUint8(0);
-        this.cursor += 1;
-        return v;
-      }
-      async u32() {
-        const v = (await this.view(4)).getUint32(0, true);
-        this.cursor += 4;
-        return v;
-      }
-      async i32() {
-        const v = (await this.view(4)).getInt32(0, true);
-        this.cursor += 4;
-        return v;
-      }
-      async f32() {
-        const v = (await this.view(4)).getFloat32(0, true);
-        this.cursor += 4;
-        return v;
-      }
-      async f64() {
-        const v = (await this.view(8)).getFloat64(0, true);
-        this.cursor += 8;
-        return v;
-      }
-      async u16() {
-        const v = (await this.view(2)).getUint16(0, true);
-        this.cursor += 2;
-        return v;
-      }
-      async i16() {
-        const v = (await this.view(2)).getInt16(0, true);
-        this.cursor += 2;
-        return v;
-      }
-      async i8() {
-        const v = (await this.view(1)).getInt8(0);
-        this.cursor += 1;
-        return v;
-      }
-      /** u64 -> Number (safe < 2^53; GGUF counts/offsets never exceed that here). */
-      async u64() {
-        const dv = await this.view(8);
-        const lo = dv.getUint32(0, true);
-        const hi = dv.getUint32(4, true);
-        this.cursor += 8;
-        const v = hi * 4294967296 + lo;
-        if (!Number.isSafeInteger(v)) throw new Error(`bonsai-gguf: u64 ${v} exceeds MAX_SAFE_INTEGER`);
-        return v;
-      }
-      async i64() {
-        return this.u64();
-      }
-      /** gguf_string_t: u64 length + raw UTF-8 bytes. */
-      async string() {
-        const len = await this.u64();
-        await this.ensure(this.cursor + len);
-        const bytes = this.buf.subarray(this.cursor, this.cursor + len);
-        this.cursor += len;
-        return new TextDecoder("utf-8").decode(bytes);
-      }
-      /** Absolute-seek the read cursor (used to jump to tensor_data_base alignment). */
-      seek(absolute) {
-        this.cursor = absolute;
-      }
-      /** Copy raw bytes [start, start+len) — resident window, for small tensors/tests. */
-      async bytes(start, len) {
-        await this.ensure(start + len);
-        return this.buf.slice(start, start + len);
-      }
-    };
-  }
-});function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-function idbGet(db, key) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).get(key);
-    req.onsuccess = () => {
-      const v = req.result;
-      if (v === void 0) resolve(void 0);
-      else resolve(v instanceof Uint8Array ? v : new Uint8Array(v));
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-function idbPut(db, key, data) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const copy = data.slice();
-    tx.objectStore(STORE).put(copy.buffer, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-function cachedRangeFetcher(url, inner, onCached) {
-  let dbPromise = null;
-  const getDb = () => {
-    if (!dbPromise) {
-      try {
-        void navigator.storage?.persist?.();
-      } catch {
-      }
-      dbPromise = openDb().catch(() => null);
-    }
-    return dbPromise;
-  };
-  return async (start, endInclusive) => {
-    const key = `${url}#${start}-${endInclusive}`;
-    const db = await getDb();
-    if (db) {
-      try {
-        const hit = await idbGet(db, key);
-        if (hit) {
-          onCached?.({ bytes: hit.byteLength, fromCache: true });
-          return hit;
-        }
-      } catch {
-      }
-    }
-    const data = await inner(start, endInclusive);
-    onCached?.({ bytes: data.byteLength, fromCache: false });
-    if (db) void idbPut(db, key, data).catch(() => {
-    });
-    return data;
-  };
-}
-var DB_NAME, STORE, DB_VERSION;
-var init_idb_cache = __esm({
-  "m1"() {
-    "use strict";
-    DB_NAME = "bonsai-weights";
-    STORE = "ranges";
-    DB_VERSION = 1;
-  }
-});function typeTrait(t) {
-  const tr = TYPE_TRAITS[t];
-  if (!tr) throw new Error(`bonsai-gguf: unsupported ggml type ${t} (not in TYPE_TRAITS)`);
-  return tr;
-}
-function tensorNBytes(t, nElements) {
-  const { blockSize, typeSize } = typeTrait(t);
-  if (nElements % blockSize !== 0) {
-    throw new Error(
-      `bonsai-gguf: element count ${nElements} not a multiple of block size ${blockSize} for ${typeTrait(t).name}`
-    );
-  }
-  return nElements / blockSize * typeSize;
-}
-var TYPE_TRAITS, QK1_0, QK2_0, Q1_0_BYTES, Q2_0_BYTES;
-var init_types = __esm({
-  "m2"() {
-    "use strict";
-    TYPE_TRAITS = {
-      [0 /* F32 */]: { blockSize: 1, typeSize: 4, name: "F32" },
-      [1 /* F16 */]: { blockSize: 1, typeSize: 2, name: "F16" },
-      [8 /* Q8_0 */]: { blockSize: 32, typeSize: 34, name: "Q8_0" },
-      [41 /* Q1_0 */]: { blockSize: 128, typeSize: 18, name: "Q1_0" },
-      [42 /* Q2_0 */]: { blockSize: 128, typeSize: 34, name: "Q2_0" }
-    };
-    QK1_0 = 128;
-    QK2_0 = 128;
-    Q1_0_BYTES = 18;
-    Q2_0_BYTES = 34;
-  }
-});function align(x, a) {
-  return x + (a - x % a) % a;
-}
-async function readScalar(r, t) {
-  switch (t) {
-    case 0 /* UINT8 */:
-      return r.u8();
-    case 1 /* INT8 */:
-      return r.i8();
-    case 2 /* UINT16 */:
-      return r.u16();
-    case 3 /* INT16 */:
-      return r.i16();
-    case 4 /* UINT32 */:
-      return r.u32();
-    case 5 /* INT32 */:
-      return r.i32();
-    case 6 /* FLOAT32 */:
-      return r.f32();
-    case 7 /* BOOL */:
-      return await r.u8() !== 0;
-    case 8 /* STRING */:
-      return r.string();
-    case 10 /* UINT64 */:
-      return r.u64();
-    case 11 /* INT64 */:
-      return r.i64();
-    case 12 /* FLOAT64 */:
-      return r.f64();
-    default:
-      throw new Error(`bonsai-gguf: cannot read scalar of value-type ${t}`);
-  }
-}
-async function readValue(r, t) {
-  if (t === 9 /* ARRAY */) {
-    const elemType = await r.u32();
-    const count = await r.u64();
-    if (elemType === 9 /* ARRAY */) {
-      throw new Error("bonsai-gguf: nested arrays are not permitted by the spec");
-    }
-    const out = new Array(count);
-    for (let i = 0; i < count; i++) out[i] = await readScalar(r, elemType);
-    return out;
-  }
-  return readScalar(r, t);
-}
-async function parseGguf(r) {
-  const magic = await r.u32();
-  if (magic !== GGUF_MAGIC) {
-    throw new Error(`bonsai-gguf: bad magic 0x${magic.toString(16)} (expected 0x46554747)`);
-  }
-  const version = await r.u32();
-  if (version !== 3) {
-    throw new Error(`bonsai-gguf: unsupported GGUF version ${version} (need 3)`);
-  }
-  const tensorCount = await r.u64();
-  const metadataKvCount = await r.u64();
-  const header = { version, tensorCount, metadataKvCount };
-  const kv = /* @__PURE__ */ new Map();
-  for (let i = 0; i < metadataKvCount; i++) {
-    const key = await r.string();
-    const valueType = await r.u32();
-    const value = await readValue(r, valueType);
-    kv.set(key, value);
-  }
-  const alignment = numberKv(kv, "general.alignment", 32);
-  const tensors = [];
-  for (let i = 0; i < tensorCount; i++) {
-    const name = await r.string();
-    const nDims = await r.u32();
-    const dims = new Array(nDims);
-    for (let d = 0; d < nDims; d++) dims[d] = await r.u64();
-    const type = await r.u32();
-    const relOffset = await r.u64();
-    const nElements = dims.reduce((a, b) => a * b, 1);
-    typeTrait(type);
-    const nBytes = tensorNBytes(type, nElements);
-    tensors.push({ name, dims, type, relOffset, nElements, nBytes });
-  }
-  const tensorDataBase = align(r.position, alignment);
-  assertBlockGeometry(tensors, alignment);
-  return { header, kv, tensors, tensorDataBase, alignment };
-}
-function assertBlockGeometry(tensors, alignment) {
-  if (tensors.length < 2) return;
-  const byOffset = [...tensors].sort((a, b) => a.relOffset - b.relOffset);
-  for (let i = 0; i < byOffset.length - 1; i++) {
-    const t = byOffset[i];
-    const gap = byOffset[i + 1].relOffset - t.relOffset;
-    const expected = align(t.nBytes, alignment);
-    if (gap === expected) continue;
-    const trait = typeTrait(t.type);
-    const ratio = t.nBytes > 0 ? gap / t.nBytes : 0;
-    throw new Error(
-      `bonsai-gguf: tensor '${t.name}' (type ${t.type} = ${trait.name}) occupies ${gap} bytes in the file but this build computes ${t.nBytes} (aligned ${expected}) from ${trait.blockSize} weights/${trait.typeSize} bytes per block \u2014 a factor of ${ratio.toFixed(4)}. The declared type id does not match the file's actual block geometry, so every read of this tensor would be at the wrong stride and would produce plausible-looking WRONG values rather than an error. If this is a '*_g64' ternary file, it uses group 64 under the same type id 42 and is NOT loadable by this runtime \u2014 use the group-128 '*-Q2_0.gguf' build.`
-    );
-  }
-}
-function numberKv(kv, key, fallback) {
-  const v = kv.get(key);
-  if (typeof v === "number") return v;
-  if (typeof v === "bigint") return Number(v);
-  return fallback;
-}
-var GGUF_MAGIC;
-var init_parser = __esm({
-  "m3"() {
-    "use strict";
-    init_types();
-    GGUF_MAGIC = 1179993927;
-  }
-});var GgufMetadata;
-var init_metadata = __esm({
-  "m4"() {
-    "use strict";
-    GgufMetadata = class {
-      constructor(kv) {
-        this.kv = kv;
-      }
-      raw(key) {
-        return this.kv.get(key);
-      }
-      str(key, fallback) {
-        const v = this.kv.get(key);
-        if (typeof v === "string") return v;
-        if (fallback !== void 0) return fallback;
-        throw new Error(`bonsai-gguf: missing string key '${key}'`);
-      }
-      num(key, fallback) {
-        const v = this.kv.get(key);
-        if (typeof v === "number") return v;
-        if (typeof v === "bigint") return Number(v);
-        if (fallback !== void 0) return fallback;
-        throw new Error(`bonsai-gguf: missing numeric key '${key}'`);
-      }
-      numOpt(key) {
-        const v = this.kv.get(key);
-        if (typeof v === "number") return v;
-        if (typeof v === "bigint") return Number(v);
-        return void 0;
-      }
-      strArray(key) {
-        const v = this.kv.get(key);
-        if (Array.isArray(v)) return v;
-        throw new Error(`bonsai-gguf: missing string-array key '${key}'`);
-      }
-      numArray(key) {
-        const v = this.kv.get(key);
-        if (Array.isArray(v)) return v.map(Number);
-        throw new Error(`bonsai-gguf: missing numeric-array key '${key}'`);
-      }
-      /** general.architecture — expected "qwen35" for Bonsai-27B. Maps "dspark" → "qwen35". */
-      get arch() {
-        const rawArch = this.str("general.architecture");
-        return rawArch === "dspark" ? "qwen35" : rawArch;
-      }
-      a(suffix) {
-        return `${this.arch}.${suffix}`;
-      }
-      /** Resolve every qwen35.* dimension the runtime needs. */
-      resolveArchConfig() {
-        const arch = this.arch;
-        return {
-          arch,
-          contextLength: this.num(this.a("context_length")),
-          embeddingLength: this.num(this.a("embedding_length")),
-          blockCount: this.num(this.a("block_count")),
-          feedForwardLength: this.num(this.a("feed_forward_length")),
-          headCount: this.num(this.a("attention.head_count")),
-          headCountKv: this.num(this.a("attention.head_count_kv")),
-          // EXPLICIT per-head dims. This arch (qwen35, DeltaNet+full-attn hybrid)
-          // sets head_dim independently of embedding_length/head_count — e.g.
-          // 5120/24 = 213.33 is NOT the head_dim; attention.key_length is. The
-          // fork reads n_embd_head_k from this key (llama-model.cpp), falling back
-          // to embedding_length/head_count only when the key is absent.
-          keyLength: this.numOpt(this.a("attention.key_length")),
-          valueLength: this.numOpt(this.a("attention.value_length")),
-          rmsEps: this.num(this.a("attention.layer_norm_rms_epsilon"), 1e-6),
-          ropeDimensionCount: this.numOpt(this.a("rope.dimension_count")),
-          ropeDimensionSections: (() => {
-            const v = this.kv.get(this.a("rope.dimension_sections"));
-            return Array.isArray(v) ? v.map(Number) : [];
-          })(),
-          ropeFreqBase: this.numOpt(this.a("rope.freq_base")) ?? 1e4,
-          ropeScalingType: (() => {
-            const v = this.kv.get(this.a("rope.scaling.type"));
-            return typeof v === "string" ? v : "none";
-          })(),
-          ropeScalingFactor: this.numOpt(this.a("rope.scaling.factor")),
-          // SSM / DeltaNet dims (present on the linear-attention layers).
-          // Bonsai-27B (qwen35, Qwen3-Next SSM path): inner_size=6144 (v width), state_size=128
-          // (per-head dim, k AND v), group_count=16 (num_k/q heads), time_step_rank=48 (num_v heads),
-          // conv_kernel=4. The DeltaNet in-proj (attn_qkv) width is q(2048)+k(2048)+v(6144)=10240.
-          ssmConvKernel: this.numOpt(this.a("ssm.conv_kernel")),
-          ssmInnerSize: this.numOpt(this.a("ssm.inner_size")),
-          ssmStateSize: this.numOpt(this.a("ssm.state_size")),
-          ssmGroupCount: this.numOpt(this.a("ssm.group_count")),
-          ssmTimeStepRank: this.numOpt(this.a("ssm.time_step_rank")),
-          // Hybrid schedule: every `full_attention_interval`-th layer is full attention, the
-          // rest are DeltaNet. Derived per-layer from tensor presence too (config.ts), but the
-          // KV is kept for cross-checking.
-          fullAttentionInterval: this.numOpt(this.a("full_attention_interval"))
-        };
-      }
-      /** Tokenizer KV block (lives inside the GGUF — not fetchable as raw text). */
-      resolveTokenizer() {
-        return {
-          model: this.str("tokenizer.ggml.model", "gpt2"),
-          tokens: this.strArray("tokenizer.ggml.tokens"),
-          merges: (() => {
-            const v = this.kv.get("tokenizer.ggml.merges");
-            return Array.isArray(v) ? v : [];
-          })(),
-          tokenType: (() => {
-            const v = this.kv.get("tokenizer.ggml.token_type");
-            return Array.isArray(v) ? v.map(Number) : [];
-          })(),
-          bosTokenId: this.numOpt("tokenizer.ggml.bos_token_id"),
-          eosTokenId: this.numOpt("tokenizer.ggml.eos_token_id")
-        };
-      }
-    };
-  }
-});var TensorRegistry;
-var init_registry = __esm({
-  "m5"() {
-    "use strict";
-    TensorRegistry = class {
-      constructor(parsed) {
-        this.byName = /* @__PURE__ */ new Map();
-        this.ordered = [];
-        this.tensorDataBase = parsed.tensorDataBase;
-        for (const info of parsed.tensors) {
-          const e = this.toEntry(info, parsed.tensorDataBase);
-          this.byName.set(e.name, e);
-          this.ordered.push(e);
-        }
-        this.ordered.sort((a, b) => a.absStart - b.absStart);
-      }
-      toEntry(info, base) {
-        const absStart = base + info.relOffset;
-        return {
-          name: info.name,
-          type: info.type,
-          dims: info.dims,
-          absStart,
-          nBytes: info.nBytes,
-          absEnd: absStart + info.nBytes
-        };
-      }
-      get(name) {
-        const e = this.byName.get(name);
-        if (!e) throw new Error(`bonsai-tensors: no tensor named '${name}'`);
-        return e;
-      }
-      has(name) {
-        return this.byName.has(name);
-      }
-      /** All tensors whose name starts with `prefix` (e.g. "blk.0."). */
-      withPrefix(prefix) {
-        return this.ordered.filter((e) => e.name.startsWith(prefix));
-      }
-      /**
-       * Coalesce a set of tensors into contiguous ranged GETs. Adjacent members
-       * (end == next.start) merge; a gap larger than `maxGap` splits into a new range so
-       * we never fetch large dead spans.
-       */
-      coalesce(entries, maxGap = 1 << 20, maxBytes = 64 << 20) {
-        const sorted = [...entries].sort((a, b) => a.absStart - b.absStart);
-        const ranges = [];
-        for (const e of sorted) {
-          const last = ranges[ranges.length - 1];
-          if (last && e.absStart - last.absEnd <= maxGap && e.absEnd - last.absStart <= maxBytes) {
-            last.absEnd = Math.max(last.absEnd, e.absEnd);
-            last.nBytes = last.absEnd - last.absStart;
-            last.members.push(e);
-          } else {
-            ranges.push({ absStart: e.absStart, absEnd: e.absEnd, nBytes: e.nBytes, members: [e] });
-          }
-        }
-        return ranges;
-      }
-      /** Coalesced ranges for one decoder block's weights. */
-      coalesceBlock(layerIndex) {
-        return this.coalesce(this.withPrefix(`blk.${layerIndex}.`));
-      }
-    };
-  }
-});function deriveDeltaNetDims(arch) {
-  const numVHeads = arch.ssmTimeStepRank ?? 0;
-  const numKHeads = arch.ssmGroupCount ?? 0;
-  const headDim = arch.ssmStateSize ?? 0;
-  const vDim = arch.ssmInnerSize ?? numVHeads * headDim;
-  const qDim = numKHeads * headDim;
-  const kDim = numKHeads * headDim;
-  const convDim = qDim + kDim + vDim;
-  const convKernel = arch.ssmConvKernel ?? 0;
-  if (numVHeads <= 0 || numKHeads <= 0 || headDim <= 0 || convKernel <= 0) {
-    throw new Error(
-      `bonsai-config: '${arch.arch}' has no DeltaNet layers \u2014 this in-browser runtime only runs the qwen35 hybrid (Bonsai-27B). Dense sizes run on a local node or the hosted lane instead. (numVHeads=${numVHeads}, numKHeads=${numKHeads}, headDim=${headDim}, convKernel=${convKernel})`
-    );
-  }
-  if (numVHeads % numKHeads !== 0) {
-    throw new Error(
-      `bonsai-config: numVHeads ${numVHeads} not divisible by numKHeads ${numKHeads}`
-    );
-  }
-  if (vDim !== numVHeads * headDim) {
-    throw new Error(
-      `bonsai-config: ssm.inner_size ${vDim} != numVHeads*headDim ${numVHeads * headDim}`
-    );
-  }
-  return {
-    numVHeads,
-    numKHeads,
-    headDim,
-    qDim,
-    kDim,
-    vDim,
-    convDim,
-    convKernel,
-    vPerKHead: numVHeads / numKHeads
-  };
-}
-function deriveLayerKinds(reg, arch) {
-  const blockCount = arch.blockCount;
-  const headDim = arch.keyLength && arch.keyLength > 0 ? arch.keyLength : arch.embeddingLength / arch.headCount;
-  const plainWidth = arch.headCount * headDim;
-  const gatedWidth = plainWidth * 2;
-  const kinds = [];
-  for (let i = 0; i < blockCount; i++) {
-    const p = `blk.${i}.`;
-    const hasSsm = reg.ordered.some((e) => e.name.startsWith(p) && e.name.includes("ssm"));
-    if (hasSsm) {
-      kinds.push("linear-attn");
-      continue;
-    }
-    const hasFullKv = reg.has(`${p}attn_k.weight`) || reg.has(`${p}attn_v.weight`) || reg.ordered.some((e) => e.name.startsWith(p) && /attn_(k|v)\b/.test(e.name));
-    if (!hasFullKv) {
-      throw new Error(
-        `bonsai-config: block ${i} has neither ssm_* nor attn_k/v tensors \u2014 cannot classify layer`
-      );
-    }
-    const qName = `${p}attn_q.weight`;
-    if (!reg.has(qName)) {
-      throw new Error(
-        `bonsai-config: block ${i} has attn_k/v but no '${qName}' \u2014 cannot determine whether its attention is gated (qwen35) or plain (qwen3)`
-      );
-    }
-    const qDims = reg.get(qName).dims;
-    const outWidth = qDims.length >= 2 ? qDims[qDims.length - 1] : qDims[0];
-    if (outWidth === gatedWidth) kinds.push("full-attn");
-    else if (outWidth === plainWidth) kinds.push("dense-attn");
-    else {
-      throw new Error(
-        `bonsai-config: block ${i} '${qName}' has output width ${outWidth}, which matches neither plain attention (nHeads*headDim = ${plainWidth}) nor gated attention (2*nHeads*headDim = ${gatedWidth}). headCount=${arch.headCount}, headDim=${headDim} (key_length=${arch.keyLength ?? "absent"}, embedding_length=${arch.embeddingLength}). Refusing to guess \u2014 the wrong choice produces fluent garbage, not an error.`
-      );
-    }
-  }
-  return kinds;
-}
-function deriveFfnNormNames(reg, blockCount) {
-  const names = [];
-  for (let i = 0; i < blockCount; i++) {
-    const post = `blk.${i}.post_attention_norm.weight`;
-    const ffn = `blk.${i}.ffn_norm.weight`;
-    if (reg.has(post)) names.push(post);
-    else if (reg.has(ffn)) names.push(ffn);
-    else {
-      throw new Error(
-        `bonsai-config: block ${i} has neither '${post}' nor '${ffn}' \u2014 cannot locate the pre-FFN norm`
-      );
-    }
-  }
-  return names;
-}
-function resolveKernelDims(cfg) {
-  const headDim = cfg.keyLength && cfg.keyLength > 0 ? cfg.keyLength : cfg.embeddingLength / cfg.headCount;
-  let deltaNetDv;
-  if (cfg.ssmInnerSize !== void 0 && cfg.headCount > 0 && cfg.ssmInnerSize % cfg.headCount === 0) {
-    deltaNetDv = cfg.ssmInnerSize / cfg.headCount;
-  }
-  return { headDim, deltaNetDv };
-}
-function assertKernelDimBounds(cfg) {
-  const { headDim, deltaNetDv } = resolveKernelDims(cfg);
-  if (!Number.isInteger(headDim) || headDim <= 0) {
-    throw new Error(
-      `bonsai-config: head_dim (embedding_length ${cfg.embeddingLength} / head_count ${cfg.headCount}) = ${headDim} is not a positive integer \u2014 cannot size attention kernels`
-    );
-  }
-  if (headDim > KERNEL_MAX_HEAD_DIM) {
-    throw new Error(
-      `bonsai-config: head_dim ${headDim} exceeds the WGSL fixed array bound ${KERNEL_MAX_HEAD_DIM} (softmax_attn.wgsl acc[${KERNEL_MAX_HEAD_DIM}]) \u2014 refusing to load; the kernel would read out of bounds on the GPU`
-    );
-  }
-  if (deltaNetDv !== void 0 && deltaNetDv > KERNEL_MAX_HEAD_DIM) {
-    throw new Error(
-      `bonsai-config: DeltaNet d_v ${deltaNetDv} (ssm.inner_size ${cfg.ssmInnerSize} / head_count ${cfg.headCount}) exceeds the WGSL fixed array bound ${KERNEL_MAX_HEAD_DIM} (deltanet.wgsl err/o[${KERNEL_MAX_HEAD_DIM}]) \u2014 refusing to load`
-    );
-  }
-  const dvNote = deltaNetDv !== void 0 ? `, DeltaNet d_v=${deltaNetDv}` : "";
-  return { message: `head_dim=${headDim}${dvNote} (<= ${KERNEL_MAX_HEAD_DIM})` };
-}
-function resolveQwen35Config(arch, reg) {
-  const layerKinds = deriveLayerKinds(reg, arch);
-  const fullAttnLayers = [];
-  const linearAttnLayers = [];
-  layerKinds.forEach((k, i) => (k === "linear-attn" ? linearAttnLayers : fullAttnLayers).push(i));
-  const deltaNet = linearAttnLayers.length > 0 ? deriveDeltaNetDims(arch) : void 0;
-  const ffnNormNames = deriveFfnNormNames(reg, arch.blockCount);
-  return { ...arch, layerKinds, fullAttnLayers, linearAttnLayers, deltaNet, ffnNormNames };
-}
-function assertLayerSchedule(cfg) {
-  const total = cfg.fullAttnLayers.length + cfg.linearAttnLayers.length;
-  if (total !== cfg.blockCount) {
-    return { ok: false, message: `layer kinds (${total}) != blockCount (${cfg.blockCount})` };
-  }
-  if (cfg.linearAttnLayers.length === 0) {
-    const dense = cfg.layerKinds.filter((k) => k === "dense-attn").length;
-    return {
-      ok: true,
-      message: `dense: ${dense} plain-attn / ${cfg.blockCount - dense} gated-attn, no DeltaNet`
-    };
-  }
-  if (cfg.blockCount === 64 && cfg.fullAttnLayers.length !== 16) {
-    console.warn(
-      `bonsai-config: Bonsai-27B expected 16 full-attn layers (64 blocks), got ${cfg.fullAttnLayers.length}. This may be a model variant; loading anyway.`
-    );
-  }
-  return {
-    ok: true,
-    message: `${cfg.fullAttnLayers.length} full-attn / ${cfg.linearAttnLayers.length} linear-attn`
-  };
-}
-var KERNEL_MAX_HEAD_DIM;
-var init_config = __esm({
-  "m6"() {
-    "use strict";
-    KERNEL_MAX_HEAD_DIM = 256;
-  }
-});function byteToUnicode() {
-  const bs = [];
-  for (let i = 33; i <= 126; i++) bs.push(i);
-  for (let i = 161; i <= 172; i++) bs.push(i);
-  for (let i = 174; i <= 255; i++) bs.push(i);
-  const cs = [...bs];
-  let n = 0;
-  for (let b = 0; b < 256; b++) {
-    if (!bs.includes(b)) {
-      bs.push(b);
-      cs.push(256 + n);
-      n++;
-    }
-  }
-  const map = /* @__PURE__ */ new Map();
-  for (let i = 0; i < bs.length; i++) map.set(bs[i], String.fromCodePoint(cs[i]));
-  return map;
-}
-function buildTables(tokens, merges, tokenType = []) {
-  const vocab = /* @__PURE__ */ new Map();
-  tokens.forEach((t, i) => vocab.set(t, i));
-  const mergeRank = /* @__PURE__ */ new Map();
-  merges.forEach((m, i) => mergeRank.set(m, i));
-  const byteEncoder = byteToUnicode();
-  const byteDecoder = /* @__PURE__ */ new Map();
-  byteEncoder.forEach((v, k) => byteDecoder.set(v, k));
-  const specialEntries = [];
-  const haveTypes = tokenType.length === tokens.length;
-  tokens.forEach((t, i) => {
-    const isSpecial = haveTypes ? tokenType[i] === TOKEN_TYPE_CONTROL || tokenType[i] === TOKEN_TYPE_USER_DEFINED : t.length >= 5 && t.startsWith("<|") && t.endsWith("|>");
-    if (isSpecial) specialEntries.push([t, i]);
-  });
-  specialEntries.sort((a, b) => b[0].length - a[0].length);
-  const specialTokens = new Map(specialEntries);
-  return { vocab, idToToken: tokens, mergeRank, byteEncoder, byteDecoder, specialTokens };
-}
-function bpeMerge(symbols, mergeRank) {
-  if (symbols.length < 2) return symbols;
-  let word = symbols;
-  for (; ; ) {
-    let bestRank = Infinity;
-    let bestIdx = -1;
-    for (let i = 0; i < word.length - 1; i++) {
-      const rank = mergeRank.get(`${word[i]} ${word[i + 1]}`);
-      if (rank !== void 0 && rank < bestRank) {
-        bestRank = rank;
-        bestIdx = i;
-      }
-    }
-    if (bestIdx === -1) break;
-    word = [
-      ...word.slice(0, bestIdx),
-      word[bestIdx] + word[bestIdx + 1],
-      ...word.slice(bestIdx + 2)
-    ];
-  }
-  return word;
-}
-function specialSplitRe(t) {
-  let re = SPECIAL_RE_CACHE.get(t);
-  if (re === void 0) {
-    if (t.specialTokens.size === 0) {
-      re = null;
-    } else {
-      const alt = [...t.specialTokens.keys()].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-      re = new RegExp(alt, "g");
-    }
-    SPECIAL_RE_CACHE.set(t, re);
-  }
-  return re;
-}
-function encodePlain(text, t, ids) {
-  let remaining = text;
-  while (remaining.length > 0) {
-    PRETOKEN_RE.lastIndex = 0;
-    const match = PRETOKEN_RE.exec(remaining);
-    if (!match) break;
-    const piece = match[0];
-    const enc = new TextEncoder();
-    const bytes = enc.encode(piece);
-    const symbols = Array.from(bytes, (b) => t.byteEncoder.get(b));
-    const merged = bpeMerge(symbols, t.mergeRank);
-    for (const tok of merged) {
-      const id = t.vocab.get(tok);
-      if (id !== void 0) ids.push(id);
-      else for (const ch of tok) {
-        const cid = t.vocab.get(ch);
-        if (cid !== void 0) ids.push(cid);
-      }
-    }
-    remaining = remaining.slice(piece.length);
-  }
-}
-function encode(text, t) {
-  const ids = [];
-  const re = specialSplitRe(t);
-  let pos = 0;
-  if (re) {
-    re.lastIndex = 0;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > pos) encodePlain(text.slice(pos, m.index), t, ids);
-      ids.push(t.specialTokens.get(m[0]));
-      pos = m.index + m[0].length;
-    }
-  }
-  if (pos < text.length) encodePlain(text.slice(pos), t, ids);
-  return ids;
-}
-function decode(ids, t) {
-  let unicode = "";
-  for (const id of ids) {
-    const tok = t.idToToken[id];
-    if (tok !== void 0) unicode += tok;
-  }
-  const bytes = [];
-  for (const ch of unicode) {
-    const b = t.byteDecoder.get(ch);
-    if (b !== void 0) bytes.push(b);
-  }
-  return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
-}
-var TOKEN_TYPE_CONTROL, TOKEN_TYPE_USER_DEFINED, PRETOKEN_RE, SPECIAL_RE_CACHE;
-var init_bpe = __esm({
-  "m7"() {
-    "use strict";
-    TOKEN_TYPE_CONTROL = 3;
-    TOKEN_TYPE_USER_DEFINED = 4;
-    PRETOKEN_RE = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
-    SPECIAL_RE_CACHE = /* @__PURE__ */ new WeakMap();
-  }
-});function renderChatML(messages, addGenerationPrompt = true, tools) {
-  let out = "";
-  if (tools && tools.length > 0) {
-    out += `<|im_start|>system
-`;
-    if (messages[0]?.role === "system") {
-      out += messages[0].content + "\n\n";
-    }
-    out += "# Tools\n\nYou may call one or more functions to assist with the user query.\n\n";
-    out += "You are provided with function signatures within <tools></tools> XML tags:\n";
-    out += "<tools>";
-    for (const tool of tools) {
-      out += "\n" + JSON.stringify(tool);
-    }
-    out += "\n</tools>\n\n";
-    out += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n";
-    out += "<tool_call>\n";
-    out += '{"name": <function-name>, "arguments": <args-json-object>}\n';
-    out += "</tool_call>";
-    out += `<|im_end|>
-`;
-  } else {
-    if (messages[0]?.role === "system") {
-      out += `<|im_start|>system
-${messages[0].content}<|im_end|>
-`;
-    }
-  }
-  const startIdx = tools && tools.length > 0 && messages[0]?.role === "system" ? 1 : !tools && messages[0]?.role === "system" ? 1 : 0;
-  for (let i = startIdx; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === "user") {
-      out += `<|im_start|>user
-${m.content}<|im_end|>
-`;
-    } else if (m.role === "assistant") {
-      let content = m.content;
-      let reasoning = m.reasoning_content || "";
-      if (reasoning) {
-        out += `<|im_start|>assistant
+/* webmcp-studio-runtime — generated, minified */
+var Dr=Object.defineProperty,Gr=Object.getOwnPropertyNames,A=(e,t)=>function(){return e&&(t=(0,e[Gr(e)[0]])(e=0)),t},re=(e,t)=>{for(var r in t)Dr(e,r,{get:t[r],enumerable:!0})};function $r(e){return e===408||e===429||e>=500}function nt(e){return async(t,r)=>{const n=((r-t+1)/1048576).toFixed(1);let o="";for(let i=1;i<=ve;i++){const s=new AbortController;let a=!1;const u=()=>setTimeout(()=>{a=!0,s.abort()},Pe);let d=u();const l=()=>{clearTimeout(d),d=u()};try{let c;try{c=await fetch(e,{headers:{Range:`bytes=${t}-${r}`},cache:"force-cache",signal:s.signal})}catch(m){if(o=m instanceof Error?m.message:String(m),a&&(o=`stalled (no response for ${Pe/1e3}s)`),i<ve){await Ye(250*2**(i-1));continue}const p=typeof navigator<"u"&&navigator.onLine===!1;throw new Error(`bonsai-gguf: fetch failed for ${n} MB range ${t}-${r} of ${e} after ${ve} attempts${p?" (browser reports OFFLINE)":""}. `+(a?`The server accepted the connection but never answered (stalled ${Pe/1e3}s). `:"")+`If the screen also flickered, the GPU driver reset and took this request with it \u2014 that is a GPU fault, not a network one. Last error: ${o}`)}if(c.status!==206&&c.status!==200){if(o=`HTTP ${c.status}`,$r(c.status)&&i<ve){await Ye(250*2**(i-1));continue}throw new Error(`bonsai-gguf: range GET ${t}-${r} (${n} MB) of ${e} returned ${c.status}`)}try{const m=c.body;if(!m)return new Uint8Array(await c.arrayBuffer());const p=m.getReader(),f=[];let g=0;for(;;){const{done:S,value:v}=await p.read();if(S)break;v&&(l(),f.push(v),g+=v.byteLength)}const h=new Uint8Array(g);let b=0;for(const S of f)h.set(S,b),b+=S.byteLength;return h}catch(m){if(a){if(o=`stalled mid-body (no progress for ${Pe/1e3}s)`,i<ve){await Ye(250*2**(i-1));continue}throw new Error(`bonsai-gguf: range GET ${t}-${r} (${n} MB) of ${e} stalled mid-body (no progress for ${Pe/1e3}s) after ${ve} attempts. Last error: ${o}`)}throw new Error(`bonsai-gguf: reading ${n} MB range body failed (device out of memory?): ${m instanceof Error?m.message:String(m)}`)}}finally{clearTimeout(d)}}throw new Error(`bonsai-gguf: range ${t}-${r} exhausted retries: ${o}`)}}function Ir(e){const t=e.filter(Boolean);if(t.length===0)throw new Error("bonsai-gguf: mirroredRangeFetcher needs at least one URL");if(t.length===1)return nt(t[0]);const r=t.map(n=>nt(n));return async(n,o)=>{const i=[];for(let s=0;s<r.length;s++)try{return await r[s](n,o)}catch(a){i.push(`${t[s]}: ${a instanceof Error?a.message:String(a)}`),s+1<r.length&&console.warn(`[bonsai-gguf] mirror ${s+1}/${r.length} failed, trying next`)}throw new Error(`bonsai-gguf: all ${r.length} mirrors failed for range ${n}-${o}:
+`+i.map((s,a)=>`  [${a+1}] ${s}`).join(`
+`))}}var ve,Ye,Pe,It,Mt=A({m0(){"use strict";ve=3,Ye=e=>new Promise(t=>setTimeout(t,e)),Pe=2e4,It=class{constructor(e){this.filled=0,this.cursor=0,this.url=e.url,this.fetchRange=e.fetchRange??nt(e.url),this.contentLength=e.contentLength,this.initialWindow=e.initialWindow??1<<20,this.buf=new Uint8Array(0)}get position(){return this.cursor}async ensure(e){if(e<=this.filled)return;let t=Math.max(e,this.filled+this.initialWindow);this.contentLength!==void 0&&(t=Math.min(t,this.contentLength));const r=await this.fetchRange(this.filled,t-1),n=new Uint8Array(this.filled+r.length);if(n.set(this.buf.subarray(0,this.filled),0),n.set(r,this.filled),this.buf=n,this.filled+=r.length,this.filled<e)throw new Error(`bonsai-gguf: underfilled window (have ${this.filled}, need ${e}) \u2014 server may not support ranges`)}async view(e){return await this.ensure(this.cursor+e),new DataView(this.buf.buffer,this.buf.byteOffset+this.cursor,e)}async u8(){const e=(await this.view(1)).getUint8(0);return this.cursor+=1,e}async u32(){const e=(await this.view(4)).getUint32(0,!0);return this.cursor+=4,e}async i32(){const e=(await this.view(4)).getInt32(0,!0);return this.cursor+=4,e}async f32(){const e=(await this.view(4)).getFloat32(0,!0);return this.cursor+=4,e}async f64(){const e=(await this.view(8)).getFloat64(0,!0);return this.cursor+=8,e}async u16(){const e=(await this.view(2)).getUint16(0,!0);return this.cursor+=2,e}async i16(){const e=(await this.view(2)).getInt16(0,!0);return this.cursor+=2,e}async i8(){const e=(await this.view(1)).getInt8(0);return this.cursor+=1,e}async u64(){const e=await this.view(8),t=e.getUint32(0,!0),r=e.getUint32(4,!0);this.cursor+=8;const n=r*4294967296+t;if(!Number.isSafeInteger(n))throw new Error(`bonsai-gguf: u64 ${n} exceeds MAX_SAFE_INTEGER`);return n}async i64(){return this.u64()}async string(){const e=await this.u64();await this.ensure(this.cursor+e);const t=this.buf.subarray(this.cursor,this.cursor+e);return this.cursor+=e,new TextDecoder("utf-8").decode(t)}seek(e){this.cursor=e}async bytes(e,t){return await this.ensure(e+t),this.buf.slice(e,e+t)}}}});function Mr(){return new Promise((e,t)=>{const r=indexedDB.open(Wt,Ct);r.onupgradeneeded=()=>{const n=r.result;n.objectStoreNames.contains(ke)||n.createObjectStore(ke)},r.onsuccess=()=>e(r.result),r.onerror=()=>t(r.error)})}function Wr(e,t){return new Promise((r,n)=>{const i=e.transaction(ke,"readonly").objectStore(ke).get(t);i.onsuccess=()=>{const s=i.result;r(s===void 0?void 0:s instanceof Uint8Array?s:new Uint8Array(s))},i.onerror=()=>n(i.error)})}function Cr(e,t,r){return new Promise((n,o)=>{const i=e.transaction(ke,"readwrite"),s=r.slice();i.objectStore(ke).put(s.buffer,t),i.oncomplete=()=>n(),i.onerror=()=>o(i.error),i.onabort=()=>o(i.error)})}function Ur(e,t,r){let n=null;const o=()=>{if(!n){try{navigator.storage?.persist?.()}catch{}n=Mr().catch(()=>null)}return n};return async(i,s)=>{const a=`${e}#${i}-${s}`,u=await o();if(u)try{const l=await Wr(u,a);if(l)return r?.({bytes:l.byteLength,fromCache:!0}),l}catch{}const d=await t(i,s);return r?.({bytes:d.byteLength,fromCache:!1}),u&&Cr(u,a,d).catch(()=>{}),d}}var Wt,ke,Ct,Kr=A({m1(){"use strict";Wt="bonsai-weights",ke="ranges",Ct=1}});function Xe(e){const t=Ut[e];if(!t)throw new Error(`bonsai-gguf: unsupported ggml type ${e} (not in TYPE_TRAITS)`);return t}function Fr(e,t){const{blockSize:r,typeSize:n}=Xe(e);if(t%r!==0)throw new Error(`bonsai-gguf: element count ${t} not a multiple of block size ${r} for ${Xe(e).name}`);return t/r*n}var Ut,ye,rt,Kt,Ft,Oe=A({m2(){"use strict";Ut={0:{blockSize:1,typeSize:4,name:"F32"},1:{blockSize:1,typeSize:2,name:"F16"},8:{blockSize:32,typeSize:34,name:"Q8_0"},41:{blockSize:128,typeSize:18,name:"Q1_0"},42:{blockSize:128,typeSize:34,name:"Q2_0"}},ye=128,rt=128,Kt=18,Ft=34}});function Qt(e,t){return e+(t-e%t)%t}async function zt(e,t){switch(t){case 0:return e.u8();case 1:return e.i8();case 2:return e.u16();case 3:return e.i16();case 4:return e.u32();case 5:return e.i32();case 6:return e.f32();case 7:return await e.u8()!==0;case 8:return e.string();case 10:return e.u64();case 11:return e.i64();case 12:return e.f64();default:throw new Error(`bonsai-gguf: cannot read scalar of value-type ${t}`)}}async function Qr(e,t){if(t===9){const r=await e.u32(),n=await e.u64();if(r===9)throw new Error("bonsai-gguf: nested arrays are not permitted by the spec");const o=new Array(n);for(let i=0;i<n;i++)o[i]=await zt(e,r);return o}return zt(e,t)}async function zr(e){const t=await e.u32();if(t!==jt)throw new Error(`bonsai-gguf: bad magic 0x${t.toString(16)} (expected 0x46554747)`);const r=await e.u32();if(r!==3)throw new Error(`bonsai-gguf: unsupported GGUF version ${r} (need 3)`);const n=await e.u64(),o=await e.u64(),i={version:r,tensorCount:n,metadataKvCount:o},s=new Map;for(let l=0;l<o;l++){const c=await e.string(),m=await e.u32(),p=await Qr(e,m);s.set(c,p)}const a=Hr(s,"general.alignment",32),u=[];for(let l=0;l<n;l++){const c=await e.string(),m=await e.u32(),p=new Array(m);for(let S=0;S<m;S++)p[S]=await e.u64();const f=await e.u32(),g=await e.u64(),h=p.reduce((S,v)=>S*v,1);Xe(f);const b=Fr(f,h);u.push({name:c,dims:p,type:f,relOffset:g,nElements:h,nBytes:b})}const d=Qt(e.position,a);return jr(u,a),{header:i,kv:s,tensors:u,tensorDataBase:d,alignment:a}}function jr(e,t){if(e.length<2)return;const r=[...e].sort((n,o)=>n.relOffset-o.relOffset);for(let n=0;n<r.length-1;n++){const o=r[n],i=r[n+1].relOffset-o.relOffset,s=Qt(o.nBytes,t);if(i===s)continue;const a=Xe(o.type),u=o.nBytes>0?i/o.nBytes:0;throw new Error(`bonsai-gguf: tensor '${o.name}' (type ${o.type} = ${a.name}) occupies ${i} bytes in the file but this build computes ${o.nBytes} (aligned ${s}) from ${a.blockSize} weights/${a.typeSize} bytes per block \u2014 a factor of ${u.toFixed(4)}. The declared type id does not match the file's actual block geometry, so every read of this tensor would be at the wrong stride and would produce plausible-looking WRONG values rather than an error. If this is a '*_g64' ternary file, it uses group 64 under the same type id 42 and is NOT loadable by this runtime \u2014 use the group-128 '*-Q2_0.gguf' build.`)}}function Hr(e,t,r){const n=e.get(t);return typeof n=="number"?n:typeof n=="bigint"?Number(n):r}var jt,Ht=A({m3(){"use strict";Oe(),jt=1179993927}}),Yt,Xt=A({m4(){"use strict";Yt=class{constructor(e){this.kv=e}raw(e){return this.kv.get(e)}str(e,t){const r=this.kv.get(e);if(typeof r=="string")return r;if(t!==void 0)return t;throw new Error(`bonsai-gguf: missing string key '${e}'`)}num(e,t){const r=this.kv.get(e);if(typeof r=="number")return r;if(typeof r=="bigint")return Number(r);if(t!==void 0)return t;throw new Error(`bonsai-gguf: missing numeric key '${e}'`)}numOpt(e){const t=this.kv.get(e);if(typeof t=="number")return t;if(typeof t=="bigint")return Number(t)}strArray(e){const t=this.kv.get(e);if(Array.isArray(t))return t;throw new Error(`bonsai-gguf: missing string-array key '${e}'`)}numArray(e){const t=this.kv.get(e);if(Array.isArray(t))return t.map(Number);throw new Error(`bonsai-gguf: missing numeric-array key '${e}'`)}get arch(){const e=this.str("general.architecture");return e==="dspark"?"qwen35":e}a(e){return`${this.arch}.${e}`}resolveArchConfig(){return{arch:this.arch,contextLength:this.num(this.a("context_length")),embeddingLength:this.num(this.a("embedding_length")),blockCount:this.num(this.a("block_count")),feedForwardLength:this.num(this.a("feed_forward_length")),headCount:this.num(this.a("attention.head_count")),headCountKv:this.num(this.a("attention.head_count_kv")),keyLength:this.numOpt(this.a("attention.key_length")),valueLength:this.numOpt(this.a("attention.value_length")),rmsEps:this.num(this.a("attention.layer_norm_rms_epsilon"),1e-6),ropeDimensionCount:this.numOpt(this.a("rope.dimension_count")),ropeDimensionSections:(()=>{const t=this.kv.get(this.a("rope.dimension_sections"));return Array.isArray(t)?t.map(Number):[]})(),ropeFreqBase:this.numOpt(this.a("rope.freq_base"))??1e4,ropeScalingType:(()=>{const t=this.kv.get(this.a("rope.scaling.type"));return typeof t=="string"?t:"none"})(),ropeScalingFactor:this.numOpt(this.a("rope.scaling.factor")),ssmConvKernel:this.numOpt(this.a("ssm.conv_kernel")),ssmInnerSize:this.numOpt(this.a("ssm.inner_size")),ssmStateSize:this.numOpt(this.a("ssm.state_size")),ssmGroupCount:this.numOpt(this.a("ssm.group_count")),ssmTimeStepRank:this.numOpt(this.a("ssm.time_step_rank")),fullAttentionInterval:this.numOpt(this.a("full_attention_interval"))}}resolveTokenizer(){return{model:this.str("tokenizer.ggml.model","gpt2"),tokens:this.strArray("tokenizer.ggml.tokens"),merges:(()=>{const e=this.kv.get("tokenizer.ggml.merges");return Array.isArray(e)?e:[]})(),tokenType:(()=>{const e=this.kv.get("tokenizer.ggml.token_type");return Array.isArray(e)?e.map(Number):[]})(),bosTokenId:this.numOpt("tokenizer.ggml.bos_token_id"),eosTokenId:this.numOpt("tokenizer.ggml.eos_token_id")}}}}}),Vt,Jt=A({m5(){"use strict";Vt=class{constructor(e){this.byName=new Map,this.ordered=[],this.tensorDataBase=e.tensorDataBase;for(const t of e.tensors){const r=this.toEntry(t,e.tensorDataBase);this.byName.set(r.name,r),this.ordered.push(r)}this.ordered.sort((t,r)=>t.absStart-r.absStart)}toEntry(e,t){const r=t+e.relOffset;return{name:e.name,type:e.type,dims:e.dims,absStart:r,nBytes:e.nBytes,absEnd:r+e.nBytes}}get(e){const t=this.byName.get(e);if(!t)throw new Error(`bonsai-tensors: no tensor named '${e}'`);return t}has(e){return this.byName.has(e)}withPrefix(e){return this.ordered.filter(t=>t.name.startsWith(e))}coalesce(e,t=1<<20,r=64<<20){const n=[...e].sort((i,s)=>i.absStart-s.absStart),o=[];for(const i of n){const s=o[o.length-1];s&&i.absStart-s.absEnd<=t&&i.absEnd-s.absStart<=r?(s.absEnd=Math.max(s.absEnd,i.absEnd),s.nBytes=s.absEnd-s.absStart,s.members.push(i)):o.push({absStart:i.absStart,absEnd:i.absEnd,nBytes:i.nBytes,members:[i]})}return o}coalesceBlock(e){return this.coalesce(this.withPrefix(`blk.${e}.`))}}}});function Yr(e){const t=e.ssmTimeStepRank??0,r=e.ssmGroupCount??0,n=e.ssmStateSize??0,o=e.ssmInnerSize??t*n,i=r*n,s=r*n,a=i+s+o,u=e.ssmConvKernel??0;if(t<=0||r<=0||n<=0||u<=0)throw new Error(`bonsai-config: '${e.arch}' has no DeltaNet layers \u2014 this in-browser runtime only runs the qwen35 hybrid (Bonsai-27B). Dense sizes run on a local node or the hosted lane instead. (numVHeads=${t}, numKHeads=${r}, headDim=${n}, convKernel=${u})`);if(t%r!==0)throw new Error(`bonsai-config: numVHeads ${t} not divisible by numKHeads ${r}`);if(o!==t*n)throw new Error(`bonsai-config: ssm.inner_size ${o} != numVHeads*headDim ${t*n}`);return{numVHeads:t,numKHeads:r,headDim:n,qDim:i,kDim:s,vDim:o,convDim:a,convKernel:u,vPerKHead:t/r}}function Xr(e,t){const r=t.blockCount,n=t.keyLength&&t.keyLength>0?t.keyLength:t.embeddingLength/t.headCount,o=t.headCount*n,i=o*2,s=[];for(let a=0;a<r;a++){const u=`blk.${a}.`;if(e.ordered.some(f=>f.name.startsWith(u)&&f.name.includes("ssm"))){s.push("linear-attn");continue}if(!(e.has(`${u}attn_k.weight`)||e.has(`${u}attn_v.weight`)||e.ordered.some(f=>f.name.startsWith(u)&&/attn_(k|v)\b/.test(f.name))))throw new Error(`bonsai-config: block ${a} has neither ssm_* nor attn_k/v tensors \u2014 cannot classify layer`);const c=`${u}attn_q.weight`;if(!e.has(c))throw new Error(`bonsai-config: block ${a} has attn_k/v but no '${c}' \u2014 cannot determine whether its attention is gated (qwen35) or plain (qwen3)`);const m=e.get(c).dims,p=m.length>=2?m[m.length-1]:m[0];if(p===i)s.push("full-attn");else if(p===o)s.push("dense-attn");else throw new Error(`bonsai-config: block ${a} '${c}' has output width ${p}, which matches neither plain attention (nHeads*headDim = ${o}) nor gated attention (2*nHeads*headDim = ${i}). headCount=${t.headCount}, headDim=${n} (key_length=${t.keyLength??"absent"}, embedding_length=${t.embeddingLength}). Refusing to guess \u2014 the wrong choice produces fluent garbage, not an error.`)}return s}function Vr(e,t){const r=[];for(let n=0;n<t;n++){const o=`blk.${n}.post_attention_norm.weight`,i=`blk.${n}.ffn_norm.weight`;if(e.has(o))r.push(o);else if(e.has(i))r.push(i);else throw new Error(`bonsai-config: block ${n} has neither '${o}' nor '${i}' \u2014 cannot locate the pre-FFN norm`)}return r}function Jr(e){const t=e.keyLength&&e.keyLength>0?e.keyLength:e.embeddingLength/e.headCount;let r;return e.ssmInnerSize!==void 0&&e.headCount>0&&e.ssmInnerSize%e.headCount===0&&(r=e.ssmInnerSize/e.headCount),{headDim:t,deltaNetDv:r}}function Zr(e){const{headDim:t,deltaNetDv:r}=Jr(e);if(!Number.isInteger(t)||t<=0)throw new Error(`bonsai-config: head_dim (embedding_length ${e.embeddingLength} / head_count ${e.headCount}) = ${t} is not a positive integer \u2014 cannot size attention kernels`);if(t>pe)throw new Error(`bonsai-config: head_dim ${t} exceeds the WGSL fixed array bound ${pe} (softmax_attn.wgsl acc[${pe}]) \u2014 refusing to load; the kernel would read out of bounds on the GPU`);if(r!==void 0&&r>pe)throw new Error(`bonsai-config: DeltaNet d_v ${r} (ssm.inner_size ${e.ssmInnerSize} / head_count ${e.headCount}) exceeds the WGSL fixed array bound ${pe} (deltanet.wgsl err/o[${pe}]) \u2014 refusing to load`);const n=r!==void 0?`, DeltaNet d_v=${r}`:"";return{message:`head_dim=${t}${n} (<= ${pe})`}}function eo(e,t){const r=Xr(t,e),n=[],o=[];r.forEach((a,u)=>(a==="linear-attn"?o:n).push(u));const i=o.length>0?Yr(e):void 0,s=Vr(t,e.blockCount);return{...e,layerKinds:r,fullAttnLayers:n,linearAttnLayers:o,deltaNet:i,ffnNormNames:s}}function to(e){const t=e.fullAttnLayers.length+e.linearAttnLayers.length;if(t!==e.blockCount)return{ok:!1,message:`layer kinds (${t}) != blockCount (${e.blockCount})`};if(e.linearAttnLayers.length===0){const r=e.layerKinds.filter(n=>n==="dense-attn").length;return{ok:!0,message:`dense: ${r} plain-attn / ${e.blockCount-r} gated-attn, no DeltaNet`}}return e.blockCount===64&&e.fullAttnLayers.length!==16&&console.warn(`bonsai-config: Bonsai-27B expected 16 full-attn layers (64 blocks), got ${e.fullAttnLayers.length}. This may be a model variant; loading anyway.`),{ok:!0,message:`${e.fullAttnLayers.length} full-attn / ${e.linearAttnLayers.length} linear-attn`}}var pe,Zt=A({m6(){"use strict";pe=256}});function no(){const e=[];for(let o=33;o<=126;o++)e.push(o);for(let o=161;o<=172;o++)e.push(o);for(let o=174;o<=255;o++)e.push(o);const t=[...e];let r=0;for(let o=0;o<256;o++)e.includes(o)||(e.push(o),t.push(256+r),r++);const n=new Map;for(let o=0;o<e.length;o++)n.set(e[o],String.fromCodePoint(t[o]));return n}function ro(e,t,r=[]){const n=new Map;e.forEach((l,c)=>n.set(l,c));const o=new Map;t.forEach((l,c)=>o.set(l,c));const i=no(),s=new Map;i.forEach((l,c)=>s.set(l,c));const a=[],u=r.length===e.length;e.forEach((l,c)=>{(u?r[c]===tn||r[c]===nn:l.length>=5&&l.startsWith("<|")&&l.endsWith("|>"))&&a.push([l,c])}),a.sort((l,c)=>c[0].length-l[0].length);const d=new Map(a);return{vocab:n,idToToken:e,mergeRank:o,byteEncoder:i,byteDecoder:s,specialTokens:d}}function oo(e,t){if(e.length<2)return e;let r=e;for(;;){let n=1/0,o=-1;for(let i=0;i<r.length-1;i++){const s=t.get(`${r[i]} ${r[i+1]}`);s!==void 0&&s<n&&(n=s,o=i)}if(o===-1)break;r=[...r.slice(0,o),r[o]+r[o+1],...r.slice(o+2)]}return r}function io(e){let t=it.get(e);if(t===void 0){if(e.specialTokens.size===0)t=null;else{const r=[...e.specialTokens.keys()].map(n=>n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|");t=new RegExp(r,"g")}it.set(e,t)}return t}function en(e,t,r){let n=e;for(;n.length>0;){ot.lastIndex=0;const o=ot.exec(n);if(!o)break;const i=o[0],a=new TextEncoder().encode(i),u=Array.from(a,l=>t.byteEncoder.get(l)),d=oo(u,t.mergeRank);for(const l of d){const c=t.vocab.get(l);if(c!==void 0)r.push(c);else for(const m of l){const p=t.vocab.get(m);p!==void 0&&r.push(p)}}n=n.slice(i.length)}}function ao(e,t){const r=[],n=io(t);let o=0;if(n){n.lastIndex=0;let i;for(;(i=n.exec(e))!==null;)i.index>o&&en(e.slice(o,i.index),t,r),r.push(t.specialTokens.get(i[0])),o=i.index+i[0].length}return o<e.length&&en(e.slice(o),t,r),r}function so(e,t){let r="";for(const o of e){const i=t.idToToken[o];i!==void 0&&(r+=i)}const n=[];for(const o of r){const i=t.byteDecoder.get(o);i!==void 0&&n.push(i)}return new TextDecoder("utf-8",{fatal:!1}).decode(new Uint8Array(n))}var tn,nn,ot,it,uo=A({m7(){"use strict";tn=3,nn=4,ot=/'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu,it=new WeakMap}});function lo(e,t=!0,r){let n="";if(r&&r.length>0){n+=`<|im_start|>system
+`,e[0]?.role==="system"&&(n+=e[0].content+`
+
+`),n+=`# Tools
+
+You may call one or more functions to assist with the user query.
+
+`,n+=`You are provided with function signatures within <tools></tools> XML tags:
+`,n+="<tools>";for(const i of r)n+=`
+`+JSON.stringify(i);n+=`
+</tools>
+
+`,n+=`For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+`,n+=`<tool_call>
+`,n+=`{"name": <function-name>, "arguments": <args-json-object>}
+`,n+="</tool_call>",n+=`<|im_end|>
+`}else e[0]?.role==="system"&&(n+=`<|im_start|>system
+${e[0].content}<|im_end|>
+`);const o=r&&r.length>0&&e[0]?.role==="system"||!r&&e[0]?.role==="system"?1:0;for(let i=o;i<e.length;i++){const s=e[i];if(s.role==="user")n+=`<|im_start|>user
+${s.content}<|im_end|>
+`;else if(s.role==="assistant"){let a=s.content,u=s.reasoning_content||"";if(u?n+=`<|im_start|>assistant
 <think>
-${reasoning.trim()}
+${u.trim()}
 </think>
 
-`;
-      } else {
-        out += `<|im_start|>assistant
-`;
-      }
-      if (content) {
-        out += content;
-      }
-      if (m.tool_calls && m.tool_calls.length > 0) {
-        for (const toolCall of m.tool_calls) {
-          if (content) out += "\n";
-          const fn = toolCall.function || toolCall;
-          out += "<tool_call>\n";
-          out += JSON.stringify({
-            name: fn.name,
-            arguments: typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : fn.arguments
-          });
-          out += "\n</tool_call>";
-        }
-      }
-      out += `<|im_end|>
-`;
-    } else if (m.role === "tool") {
-      out += `<|im_start|>user
+`:n+=`<|im_start|>assistant
+`,a&&(n+=a),s.tool_calls&&s.tool_calls.length>0)for(const d of s.tool_calls){a&&(n+=`
+`);const l=d.function||d;n+=`<tool_call>
+`,n+=JSON.stringify({name:l.name,arguments:typeof l.arguments=="string"?JSON.parse(l.arguments):l.arguments}),n+=`
+</tool_call>`}n+=`<|im_end|>
+`}else s.role==="tool"&&(n+=`<|im_start|>user
 <tool_response>
-${m.content}
+${s.content}
 </tool_response><|im_end|>
-`;
-    }
-  }
-  if (addGenerationPrompt) {
-    out += `<|im_start|>assistant
+`)}return t&&(n+=`<|im_start|>assistant
 <think>
 
 </think>
 
-`;
-  }
-  return out;
-}
-var init_chat_template = __esm({
-  "m8"() {
-    "use strict";
-  }
-});var BonsaiTokenizer;
-var init_load = __esm({
-  "m9"() {
-    "use strict";
-    init_bpe();
-    init_chat_template();
-    BonsaiTokenizer = class {
-      constructor(spec) {
-        this.tables = buildTables(spec.tokens, spec.merges, spec.tokenType);
-        this.bosTokenId = spec.bosTokenId;
-        this.eosTokenId = spec.eosTokenId;
-        this.thinkStartId = this.tables.specialTokens.get("<think>");
-        this.thinkEndId = this.tables.specialTokens.get("</think>");
-        const stops = /* @__PURE__ */ new Set();
-        if (spec.eosTokenId !== void 0) stops.add(spec.eosTokenId);
-        for (const name of ["<|im_end|>", "<|endoftext|>"]) {
-          const id = this.tables.specialTokens.get(name);
-          if (id !== void 0) stops.add(id);
-        }
-        this.stopIds = stops;
-      }
-      get vocabSize() {
-        return this.tables.idToToken.length;
-      }
-      encode(text) {
-        return encode(text, this.tables);
-      }
-      decode(ids) {
-        return decode(ids, this.tables);
-      }
-      /** Render + encode a chat turn with optional tools. */
-      encodeChat(messages, tools) {
-        return this.encode(renderChatML(messages, true, tools));
-      }
-      /** True when `id` ends the assistant turn (GGUF eos, `<|im_end|>`, or `<|endoftext|>`). */
-      isStop(id) {
-        return this.stopIds.has(id);
-      }
-      /** @deprecated Only ever matched the single GGUF eos id — use {@link isStop}. */
-      isEos(id) {
-        return this.eosTokenId !== void 0 && id === this.eosTokenId;
-      }
-    };
-  }
-});var BufferUsage, MapMode;
-var init_gpu_min = __esm({
-  "m10"() {
-    "use strict";
-    BufferUsage = {
-      MAP_READ: 1,
-      MAP_WRITE: 2,
-      COPY_SRC: 4,
-      COPY_DST: 8,
-      STORAGE: 128,
-      UNIFORM: 64
-    };
-    MapMode = { READ: 1, WRITE: 2 };
-  }
-});function needsChunking(device, nBytes) {
-  return nBytes > device.limits.maxStorageBufferBindingSize;
-}
-async function uploadCoalescedRange(device, fetchRange, range) {
-  const body = await fetchRange(range.absStart, range.absEnd - 1);
-  const out = [];
-  for (const m of range.members) {
-    const localStart = m.absStart - range.absStart;
-    const slice = body.subarray(localStart, localStart + m.nBytes);
-    if (needsChunking(device, m.nBytes)) {
-      const cap = device.limits.maxStorageBufferBindingSize;
-      const hint = cap === WEBGPU_DEFAULT_MAX_STORAGE_BINDING ? " \u2014 this is the WebGPU DEFAULT limit, so the device was almost certainly created without requiredLimits; mirror adapter.limits in requestDevice()" : " \u2014 this adapter genuinely caps here; a chunked upload path is required";
-      throw new Error(
-        `bonsai-upload: tensor '${m.name}' (${m.nBytes} B) exceeds maxStorageBufferBindingSize (${cap})${hint}`
-      );
-    }
-    const payload = m.type === GGML_Q1_0 ? repackQ1_0(slice) : m.type === GGML_Q2_0 ? repackQ2_0(slice) : padTo4(slice);
-    const buffer = device.createBuffer({
-      size: payload.byteLength,
-      usage: BufferUsage.STORAGE | BufferUsage.COPY_DST | BufferUsage.COPY_SRC,
-      label: m.name
-    });
-    device.queue.writeBuffer(buffer, 0, payload);
-    out.push({ entry: m, buffer });
-  }
-  return out;
-}
-function repackQ1_0(slice) {
-  const nBlocks = Math.floor(slice.length / Q1_0_RAW_BYTES);
-  const packed = new Uint8Array(nBlocks * Q1_0_GPU_BYTES);
-  for (let b = 0; b < nBlocks; b++) {
-    packed.set(
-      slice.subarray(b * Q1_0_RAW_BYTES, b * Q1_0_RAW_BYTES + Q1_0_RAW_BYTES),
-      b * Q1_0_GPU_BYTES
-    );
-  }
-  return packed;
-}
-function repackQ2_0(slice) {
-  const nBlocks = Math.floor(slice.length / Q2_0_RAW_BYTES);
-  const packed = new Uint8Array(nBlocks * Q2_0_GPU_BYTES);
-  for (let b = 0; b < nBlocks; b++) {
-    packed.set(
-      slice.subarray(b * Q2_0_RAW_BYTES, b * Q2_0_RAW_BYTES + Q2_0_RAW_BYTES),
-      b * Q2_0_GPU_BYTES
-    );
-  }
-  return packed;
-}
-function padTo4(slice) {
-  const n = alignUp(slice.length, 4);
-  if (n === slice.length) return slice;
-  const padded = new Uint8Array(n);
-  padded.set(slice);
-  return padded;
-}
-function alignUp(n, a) {
-  return n + (a - n % a) % a;
-}
-var WEBGPU_DEFAULT_MAX_STORAGE_BINDING, GGML_Q1_0, GGML_Q2_0, Q1_0_RAW_BYTES, Q1_0_GPU_BYTES, Q2_0_RAW_BYTES, Q2_0_GPU_BYTES;
-var init_upload = __esm({
-  "m11"() {
-    "use strict";
-    init_gpu_min();
-    WEBGPU_DEFAULT_MAX_STORAGE_BINDING = 134217728;
-    GGML_Q1_0 = 41;
-    GGML_Q2_0 = 42;
-    Q1_0_RAW_BYTES = 18;
-    Q1_0_GPU_BYTES = 20;
-    Q2_0_RAW_BYTES = 34;
-    Q2_0_GPU_BYTES = 36;
-  }
-});var WeightStore;
-var init_weights = __esm({
-  "m12"() {
-    "use strict";
-    init_types();
-    init_upload();
-    WeightStore = class {
-      constructor(device, registry, fetchRange) {
-        this.device = device;
-        this.registry = registry;
-        this.fetchRange = fetchRange;
-        this.buffers = /* @__PURE__ */ new Map();
-        this.loadedLayers = /* @__PURE__ */ new Set();
-        /** Layers whose upload has STARTED but not finished — see ensureLayer's re-entrancy note. */
-        this.inflight = /* @__PURE__ */ new Map();
-      }
-      has(name) {
-        return this.buffers.has(name);
-      }
-      get(name) {
-        const b = this.buffers.get(name);
-        if (!b) throw new Error(`bonsai-weights: '${name}' not resident (load its layer first)`);
-        return b;
-      }
-      /**
-       * The GGUF quant type of a tensor, from the file's own header.
-       *
-       * Consumers used to assume Q1_0 everywhere — hardcoded 18-byte blocks, hardcoded
-       * `readQ1Block`, hardcoded `projectQ1`. With a second quant type that assumption reads a
-       * 34-byte Q2_0 block as an 18-byte Q1_0 one and produces fluent garbage instead of
-       * crashing, which is the hardest failure in this runtime to notice. So the type comes from
-       * the registry, never from a default.
-       */
-      typeOf(name) {
-        return this.registry.get(name).type;
-      }
-      /**
-       * The quant type shared by every DECODER-BLOCK weight tensor in this file.
-       *
-       * This is what `OpCtx.quantType` is set from, and it is the reason the block projections
-       * can keep dispatching off the context instead of threading a type through ~20 call sites:
-       * the homogeneity the context-level dispatch assumes is CHECKED here against the file's
-       * own header rather than believed.
-       *
-       * A mixed-quant file THROWS. That is deliberate — the failure mode of guessing wrong is a
-       * 34-byte Q2_0 block read at the 18-byte Q1_0 stride, which does not crash and does not
-       * produce noise; it produces fluent, plausible text. Refusing to load is the only outcome
-       * a human can notice. Per-tensor dispatch (`projectQuantized`) is the way to SUPPORT mixed
-       * quant if a future file needs it — not a default picked here.
-       *
-       * Reads the registry (the parsed header), so it is valid before any layer is uploaded.
-       * Non-quantized block tensors (F32/F16 norms) are ignored; an unsupported QUANT type is
-       * not — it throws, because it would otherwise fall through to the Q1_0 path.
-       */
-      weightQuantType() {
-        if (this.blockQuantType !== void 0) return this.blockQuantType;
-        const isFloat = (t) => t === 0 /* F32 */ || t === 1 /* F16 */;
-        const quantized = this.registry.ordered.filter(
-          (e) => e.name.startsWith("blk.") && !isFloat(e.type)
-        );
-        if (quantized.length === 0) {
-          throw new Error(
-            "bonsai-weights: no quantized 'blk.*' weight tensors in the registry \u2014 cannot determine the model's weight quant type"
-          );
-        }
-        const byType = /* @__PURE__ */ new Map();
-        for (const e of quantized) if (!byType.has(e.type)) byType.set(e.type, e.name);
-        for (const [t, example] of byType) {
-          if (t !== 41 /* Q1_0 */ && t !== 42 /* Q2_0 */) {
-            throw new Error(
-              `bonsai-weights: block tensor '${example}' has unsupported quant type ${t} (supported: Q1_0=${41 /* Q1_0 */}, Q2_0=${42 /* Q2_0 */})`
-            );
-          }
-        }
-        if (byType.size > 1) {
-          const seen = [...byType].map(([t, n]) => `${t} (e.g. '${n}')`).join(", ");
-          throw new Error(
-            `bonsai-weights: decoder blocks mix quant types \u2014 ${seen}. The block projections dispatch once per context, so a mixed file would silently run some layers through the wrong kernel and emit fluent garbage. Use projectQuantized per tensor to support this.`
-          );
-        }
-        this.blockQuantType = quantized[0].type;
-        return this.blockQuantType;
-      }
-      register(uploaded) {
-        for (const u of uploaded) this.buffers.set(u.entry.name, u.buffer);
-      }
-      /** Upload the non-layer globals: token embeddings, output norm, LM head. */
-      async loadGlobals(names) {
-        const entries = names.filter((n) => this.registry.has(n)).map((n) => this.registry.get(n));
-        for (const range of this.registry.coalesce(entries)) {
-          this.register(await uploadCoalescedRange(this.device, this.fetchRange, range));
-        }
-      }
-      /** Lazily upload one decoder block's weights (coalesced). Idempotent AND re-entrant.
-       *
-       * RE-ENTRANCY IS LOAD-BEARING, not defensive polish. The old body checked `loadedLayers`,
-       * awaited the fetches, and only THEN recorded the layer — so two overlapping calls for the
-       * same block both missed the guard, both fetched it over HTTP, and both uploaded it, with
-       * the second `register()` overwriting the first buffer handle and LEAKING the first
-       * (nothing else holds it, and `evictLayer` walks names, not orphans). That was harmless
-       * only because every caller awaited serially. `prefetchLayer` makes overlap the normal
-       * case, so the in-flight map has to exist before the prefetch does. */
-      ensureLayer(layerIndex) {
-        if (this.loadedLayers.has(layerIndex)) return Promise.resolve();
-        const inflight = this.inflight.get(layerIndex);
-        if (inflight) return inflight;
-        const started = this.loadLayer(layerIndex).finally(() => this.inflight.delete(layerIndex));
-        this.inflight.set(layerIndex, started);
-        return started;
-      }
-      async loadLayer(layerIndex) {
-        for (const range of this.registry.coalesceBlock(layerIndex)) {
-          this.register(await uploadCoalescedRange(this.device, this.fetchRange, range));
-        }
-        this.loadedLayers.add(layerIndex);
-      }
-      /**
-       * Start streaming a layer WITHOUT waiting for it — the read-ahead that turns first-token
-       * latency from a sum into an overlap.
-       *
-       * The first generation streams the whole model layer by layer, and every fetch used to sit
-       * on the critical path: `await ensureLayer(l)` then compute l, 36 times, so the link idled
-       * through every block's compute and the GPU idled through every block's download. Nothing
-       * required that ordering — layer l+1's bytes depend on nothing layer l produces.
-       *
-       * Errors are swallowed HERE and only here: a prefetch is speculative, so a failure must not
-       * surface as an unhandled rejection from a promise nobody awaited. The real `ensureLayer`
-       * call for that block still runs (the map entry is gone by then) and still throws where a
-       * caller can see it, so a genuinely broken fetch fails at the point that needs the bytes
-       * rather than being converted into silence.
-       */
-      prefetchLayer(layerIndex) {
-        if (layerIndex < 0 || this.loadedLayers.has(layerIndex)) return;
-        if (this.registry.coalesceBlock(layerIndex).length === 0) return;
-        void this.ensureLayer(layerIndex).catch(() => {
-        });
-      }
-      /** Layers currently uploaded, for tests and the read-ahead's own assertions. */
-      get residentLayerCount() {
-        return this.loadedLayers.size;
-      }
-      /** Free a layer's buffers (for streaming under tight memory). */
-      evictLayer(layerIndex, tensorNames) {
-        this.inflight.delete(layerIndex);
-        for (const n of tensorNames) {
-          const b = this.buffers.get(n);
-          if (b) {
-            b.destroy();
-            this.buffers.delete(n);
-          }
-        }
-        this.loadedLayers.delete(layerIndex);
-      }
-    };
-  }
-});var KERNEL_NAMES, PipelineCache;
-var init_pipelines = __esm({
-  "m13"() {
-    "use strict";
-    KERNEL_NAMES = [
-      "quantize_q8_0",
-      "q1_0_dequant",
-      "q1_0_q8_0_matmul",
-      "q2_0_dequant",
-      "q2_0_q8_0_matmul",
-      "kv_quant_4bit",
-      "rmsnorm",
-      "rope_imrope",
-      "softmax_attn",
-      "softmax_attn_batched",
-      "causal_conv1d",
-      "deltanet",
-      "deltanet_gate",
-      "deltanet_seq",
-      "swiglu",
-      "sampling",
-      "logit_topk",
-      "vae_ops",
-      "elementwise",
-      "elementwise_inplace"
-    ];
-    PipelineCache = class {
-      constructor(device, sources) {
-        this.device = device;
-        this.sources = sources;
-        this.cache = /* @__PURE__ */ new Map();
-      }
-      /**
-       * `entry` names a non-default entry point in the same WGSL module.
-       *
-       * Almost every kernel here is one module with one `main`, and that stays the default. The
-       * exception is a kernel whose passes MUST share a binding layout and a set of constants —
-       * logit_topk's histogram and gather read the same logits buffer and the same uniform, and
-       * splitting them into two files would duplicate the struct and the bin arithmetic, which
-       * is precisely the kind of copy that drifts and produces a silently wrong threshold.
-       *
-       * The cache key includes the entry point; keying on the module name alone would hand the
-       * gather pipeline back for the histogram pass, which is a wrong-kernel bug that still
-       * dispatches successfully.
-       */
-      get(name, entry = "main") {
-        const key = entry === "main" ? name : `${name}:${entry}`;
-        const hit = this.cache.get(key);
-        if (hit) return hit;
-        const code = this.sources[name];
-        if (!code) throw new Error(`bonsai-pipelines: no WGSL source registered for '${name}'`);
-        const module = this.device.createShaderModule({ code, label: name });
-        const pipeline = this.device.createComputePipeline({
-          label: key,
-          layout: "auto",
-          compute: { module, entryPoint: entry }
-        });
-        this.cache.set(key, pipeline);
-        return pipeline;
-      }
-      /** Warm the whole set at load so first-token latency doesn't eat compile time. */
-      warmAll() {
-        for (const n of KERNEL_NAMES) {
-          if (!this.sources[n]) continue;
-          if (n === "logit_topk") {
-            this.get(n, "hist_main");
-            this.get(n, "gather_main");
-            continue;
-          }
-          if (n === "vae_ops") {
-            this.get(n, "conv2d_main");
-            this.get(n, "groupnorm_main");
-            this.get(n, "upsample_nearest_main");
-            continue;
-          }
-          this.get(n);
-        }
-      }
-    };
-  }
-});function createBonsaiRuntime(deps) {
-  return new BonsaiRuntime(deps);
-}
-var BonsaiRuntime;
-var init_runtime = __esm({
-  "m14"() {
-    "use strict";
-    init_reader();
-    init_idb_cache();
-    init_parser();
-    init_metadata();
-    init_registry();
-    init_config();
-    init_load();
-    init_weights();
-    init_pipelines();
-    BonsaiRuntime = class {
-      constructor(deps) {
-        this.deps = deps;
-      }
-      /** Parse the GGUF and build everything needed to run. Emits progress 0-100. */
-      async load(opts) {
-        const urls = opts.mirrorUrls?.length ? opts.mirrorUrls : [opts.modelUrl];
-        const baseFetch = this.deps.fetchRange ?? mirroredRangeFetcher(urls);
-        const fetchRange = this.deps.fetchRange ? baseFetch : cachedRangeFetcher(opts.modelUrl, baseFetch);
-        const p = opts.onProgress ?? (() => {
-        });
-        p({ phase: "parse", percent: 2, detail: "range-fetching header + KV" });
-        const reader = new RangeReader({ url: opts.modelUrl, fetchRange });
-        const parsed = await parseGguf(reader);
-        const meta = new GgufMetadata(parsed.kv);
-        p({ phase: "config", percent: 30, detail: `arch=${meta.arch}` });
-        const registry = new TensorRegistry(parsed);
-        const arch = meta.resolveArchConfig();
-        const config = resolveQwen35Config(arch, registry);
-        const schedule = assertLayerSchedule(config);
-        const dimBounds = assertKernelDimBounds(config);
-        console.log(`bonsai: kernel dims OK \u2014 ${dimBounds.message}`);
-        p({ phase: "tokenizer", percent: 45, detail: "building BPE tables" });
-        const tokenizer = new BonsaiTokenizer(meta.resolveTokenizer());
-        p({ phase: "pipelines", percent: 60, detail: "compiling WGSL" });
-        const pipelines = new PipelineCache(this.deps.device, this.deps.kernelSources);
-        pipelines.warmAll();
-        p({ phase: "globals", percent: 75, detail: "uploading embeddings + LM head + norms" });
-        const weights = new WeightStore(this.deps.device, registry, fetchRange);
-        const requiredGlobals = ["token_embd.weight", "output_norm.weight"];
-        await weights.loadGlobals(requiredGlobals);
-        for (const name of requiredGlobals) {
-          if (!weights.has(name)) {
-            throw new Error(
-              `bonsai-runtime: required tensor '${name}' was not found in the GGUF file. The model file may be corrupted or incomplete \u2014 try clearing your browser cache and reloading, or switch to a different model size.`
-            );
-          }
-        }
-        const optionalGlobals = ["output.weight"];
-        try {
-          await weights.loadGlobals(optionalGlobals);
-        } catch (e) {
-          console.warn(`bonsai-runtime: optional globals not loaded: ${e.message}`);
-        }
-        p({ phase: "ready", percent: 100 });
-        const model = {
-          device: this.deps.device,
-          parsed,
-          meta,
-          registry,
-          config,
-          tokenizer,
-          pipelines,
-          weights,
-          scheduleOk: schedule.ok,
-          scheduleMessage: schedule.message
-        };
-        this.model = model;
-        return model;
-      }
-      get loaded() {
-        return this.model;
-      }
-    };
-  }
-});function f16ToF32(h) {
-  const s = (h & 32768) >> 15;
-  const e = (h & 31744) >> 10;
-  const f = h & 1023;
-  if (e === 0) {
-    return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
-  }
-  if (e === 31) {
-    return f ? NaN : s ? -Infinity : Infinity;
-  }
-  return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
-}
-function readQ1Block(bytes, off = 0) {
-  if (bytes.length - off < Q1_0_BYTES) throw new Error("readQ1Block: need 18 bytes");
-  const dBits = bytes[off] | bytes[off + 1] << 8;
-  const qs = bytes.subarray(off + 2, off + 2 + 16);
-  return { d: f16ToF32(dBits), qs: new Uint8Array(qs) };
-}
-function q1Bit(qs, j) {
-  return qs[j >> 3] >> (j & 7) & 1;
-}
-function dequantQ1Block(block) {
-  const out = new Float32Array(QK1_0);
-  for (let j = 0; j < QK1_0; j++) out[j] = q1Bit(block.qs, j) ? block.d : -block.d;
-  return out;
-}
-function readQ2Block(bytes, off = 0) {
-  if (bytes.length - off < Q2_0_BYTES) throw new Error("readQ2Block: need 34 bytes");
-  const dBits = bytes[off] | bytes[off + 1] << 8;
-  const qs = bytes.subarray(off + 2, off + 2 + 32);
-  return { d: f16ToF32(dBits), qs: new Uint8Array(qs) };
-}
-function q2Bits(qs, j) {
-  const byteIndex = j >> 2;
-  const bitOffset = (j & 3) << 1;
-  return qs[byteIndex] >> bitOffset & 3;
-}
-function dequantQ2Block(block) {
-  const out = new Float32Array(QK2_0);
-  for (let j = 0; j < QK2_0; j++) {
-    const q = q2Bits(block.qs, j);
-    out[j] = (q - 1) * block.d;
-  }
-  return out;
-}
-var _f32, _u32;
-var init_reference = __esm({
-  "m15"() {
-    "use strict";
-    init_types();
-    _f32 = new Float32Array(1);
-    _u32 = new Uint32Array(_f32.buffer);
-  }
-});var PROVENANCE_MARKER, PROVENANCE_HEADER_TS, PROVENANCE_HEADER_WGSL;
-var init_provenance = __esm({
-  "m16"() {
-    "use strict";
-    PROVENANCE_MARKER = "Numerics ported from owner-owned fork";
-    PROVENANCE_HEADER_TS = `/* SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`),n}var rn=A({m8(){"use strict"}}),on,an=A({m9(){"use strict";uo(),rn(),on=class{constructor(e){this.tables=ro(e.tokens,e.merges,e.tokenType),this.bosTokenId=e.bosTokenId,this.eosTokenId=e.eosTokenId,this.thinkStartId=this.tables.specialTokens.get("<think>"),this.thinkEndId=this.tables.specialTokens.get("</think>");const t=new Set;e.eosTokenId!==void 0&&t.add(e.eosTokenId);for(const r of["<|im_end|>","<|endoftext|>"]){const n=this.tables.specialTokens.get(r);n!==void 0&&t.add(n)}this.stopIds=t}get vocabSize(){return this.tables.idToToken.length}encode(e){return ao(e,this.tables)}decode(e){return so(e,this.tables)}encodeChat(e,t){return this.encode(lo(e,!0,t))}isStop(e){return this.stopIds.has(e)}isEos(e){return this.eosTokenId!==void 0&&e===this.eosTokenId}}}}),I,sn,Ve=A({m10(){"use strict";I={MAP_READ:1,MAP_WRITE:2,COPY_SRC:4,COPY_DST:8,STORAGE:128,UNIFORM:64},sn={READ:1,WRITE:2}}});function co(e,t){return t>e.limits.maxStorageBufferBindingSize}async function un(e,t,r){const n=await t(r.absStart,r.absEnd-1),o=[];for(const i of r.members){const s=i.absStart-r.absStart,a=n.subarray(s,s+i.nBytes);if(co(e,i.nBytes)){const l=e.limits.maxStorageBufferBindingSize,c=l===ln?" \u2014 this is the WebGPU DEFAULT limit, so the device was almost certainly created without requiredLimits; mirror adapter.limits in requestDevice()":" \u2014 this adapter genuinely caps here; a chunked upload path is required";throw new Error(`bonsai-upload: tensor '${i.name}' (${i.nBytes} B) exceeds maxStorageBufferBindingSize (${l})${c}`)}const u=i.type===cn?ho(a):i.type===dn?po(a):mo(a),d=e.createBuffer({size:u.byteLength,usage:I.STORAGE|I.COPY_DST|I.COPY_SRC,label:i.name});e.queue.writeBuffer(d,0,u),o.push({entry:i,buffer:d})}return o}function ho(e){const t=Math.floor(e.length/We),r=new Uint8Array(t*at);for(let n=0;n<t;n++)r.set(e.subarray(n*We,n*We+We),n*at);return r}function po(e){const t=Math.floor(e.length/Ce),r=new Uint8Array(t*st);for(let n=0;n<t;n++)r.set(e.subarray(n*Ce,n*Ce+Ce),n*st);return r}function mo(e){const t=fo(e.length,4);if(t===e.length)return e;const r=new Uint8Array(t);return r.set(e),r}function fo(e,t){return e+(t-e%t)%t}var ln,cn,dn,We,at,Ce,st,go=A({m11(){"use strict";Ve(),ln=134217728,cn=41,dn=42,We=18,at=20,Ce=34,st=36}}),hn,bo=A({m12(){"use strict";Oe(),go(),hn=class{constructor(e,t,r){this.device=e,this.registry=t,this.fetchRange=r,this.buffers=new Map,this.loadedLayers=new Set,this.inflight=new Map}has(e){return this.buffers.has(e)}get(e){const t=this.buffers.get(e);if(!t)throw new Error(`bonsai-weights: '${e}' not resident (load its layer first)`);return t}typeOf(e){return this.registry.get(e).type}weightQuantType(){if(this.blockQuantType!==void 0)return this.blockQuantType;const e=n=>n===0||n===1,t=this.registry.ordered.filter(n=>n.name.startsWith("blk.")&&!e(n.type));if(t.length===0)throw new Error("bonsai-weights: no quantized 'blk.*' weight tensors in the registry \u2014 cannot determine the model's weight quant type");const r=new Map;for(const n of t)r.has(n.type)||r.set(n.type,n.name);for(const[n,o]of r)if(n!==41&&n!==42)throw new Error(`bonsai-weights: block tensor '${o}' has unsupported quant type ${n} (supported: Q1_0=41, Q2_0=42)`);if(r.size>1){const n=[...r].map(([o,i])=>`${o} (e.g. '${i}')`).join(", ");throw new Error(`bonsai-weights: decoder blocks mix quant types \u2014 ${n}. The block projections dispatch once per context, so a mixed file would silently run some layers through the wrong kernel and emit fluent garbage. Use projectQuantized per tensor to support this.`)}return this.blockQuantType=t[0].type,this.blockQuantType}register(e){for(const t of e)this.buffers.set(t.entry.name,t.buffer)}async loadGlobals(e){const t=e.filter(r=>this.registry.has(r)).map(r=>this.registry.get(r));for(const r of this.registry.coalesce(t))this.register(await un(this.device,this.fetchRange,r))}ensureLayer(e){if(this.loadedLayers.has(e))return Promise.resolve();const t=this.inflight.get(e);if(t)return t;const r=this.loadLayer(e).finally(()=>this.inflight.delete(e));return this.inflight.set(e,r),r}async loadLayer(e){for(const t of this.registry.coalesceBlock(e))this.register(await un(this.device,this.fetchRange,t));this.loadedLayers.add(e)}prefetchLayer(e){e<0||this.loadedLayers.has(e)||this.registry.coalesceBlock(e).length!==0&&this.ensureLayer(e).catch(()=>{})}get residentLayerCount(){return this.loadedLayers.size}evictLayer(e,t){this.inflight.delete(e);for(const r of t){const n=this.buffers.get(r);n&&(n.destroy(),this.buffers.delete(r))}this.loadedLayers.delete(e)}}}}),pn,mn,fn=A({m13(){"use strict";pn=["quantize_q8_0","q1_0_dequant","q1_0_q8_0_matmul","q2_0_dequant","q2_0_q8_0_matmul","kv_quant_4bit","rmsnorm","rope_imrope","softmax_attn","softmax_attn_batched","causal_conv1d","deltanet","deltanet_gate","deltanet_seq","swiglu","sampling","logit_topk","vae_ops","elementwise","elementwise_inplace"],mn=class{constructor(e,t){this.device=e,this.sources=t,this.cache=new Map}get(e,t="main"){const r=t==="main"?e:`${e}:${t}`,n=this.cache.get(r);if(n)return n;const o=this.sources[e];if(!o)throw new Error(`bonsai-pipelines: no WGSL source registered for '${e}'`);const i=this.device.createShaderModule({code:o,label:e}),s=this.device.createComputePipeline({label:r,layout:"auto",compute:{module:i,entryPoint:t}});return this.cache.set(r,s),s}warmAll(){for(const e of pn)if(this.sources[e]){if(e==="logit_topk"){this.get(e,"hist_main"),this.get(e,"gather_main");continue}if(e==="vae_ops"){this.get(e,"conv2d_main"),this.get(e,"groupnorm_main"),this.get(e,"upsample_nearest_main");continue}this.get(e)}}}}});function _o(e){return new gn(e)}var gn,wo=A({m14(){"use strict";Mt(),Kr(),Ht(),Xt(),Jt(),Zt(),an(),bo(),fn(),gn=class{constructor(e){this.deps=e}async load(e){const t=e.mirrorUrls?.length?e.mirrorUrls:[e.modelUrl],r=this.deps.fetchRange??Ir(t),n=this.deps.fetchRange?r:Ur(e.modelUrl,r),o=e.onProgress??(()=>{});o({phase:"parse",percent:2,detail:"range-fetching header + KV"});const i=new It({url:e.modelUrl,fetchRange:n}),s=await zr(i),a=new Yt(s.kv);o({phase:"config",percent:30,detail:`arch=${a.arch}`});const u=new Vt(s),d=a.resolveArchConfig(),l=eo(d,u),c=to(l),m=Zr(l);console.log(`bonsai: kernel dims OK \u2014 ${m.message}`),o({phase:"tokenizer",percent:45,detail:"building BPE tables"});const p=new on(a.resolveTokenizer());o({phase:"pipelines",percent:60,detail:"compiling WGSL"});const f=new mn(this.deps.device,this.deps.kernelSources);f.warmAll(),o({phase:"globals",percent:75,detail:"uploading embeddings + LM head + norms"});const g=new hn(this.deps.device,u,n),h=["token_embd.weight","output_norm.weight"];await g.loadGlobals(h);for(const v of h)if(!g.has(v))throw new Error(`bonsai-runtime: required tensor '${v}' was not found in the GGUF file. The model file may be corrupted or incomplete \u2014 try clearing your browser cache and reloading, or switch to a different model size.`);const b=["output.weight"];try{await g.loadGlobals(b)}catch(v){console.warn(`bonsai-runtime: optional globals not loaded: ${v.message}`)}o({phase:"ready",percent:100});const S={device:this.deps.device,parsed:s,meta:a,registry:u,config:l,tokenizer:p,pipelines:f,weights:g,scheduleOk:c.ok,scheduleMessage:c.message};return this.model=S,S}get loaded(){return this.model}}}});function bn(e){const t=(e&32768)>>15,r=(e&31744)>>10,n=e&1023;return r===0?(t?-1:1)*Math.pow(2,-14)*(n/1024):r===31?n?NaN:t?-1/0:1/0:(t?-1:1)*Math.pow(2,r-15)*(1+n/1024)}function vo(e,t=0){if(e.length-t<Kt)throw new Error("readQ1Block: need 18 bytes");const r=e[t]|e[t+1]<<8,n=e.subarray(t+2,t+2+16);return{d:bn(r),qs:new Uint8Array(n)}}function ko(e,t){return e[t>>3]>>(t&7)&1}function yo(e){const t=new Float32Array(ye);for(let r=0;r<ye;r++)t[r]=ko(e.qs,r)?e.d:-e.d;return t}function So(e,t=0){if(e.length-t<Ft)throw new Error("readQ2Block: need 34 bytes");const r=e[t]|e[t+1]<<8,n=e.subarray(t+2,t+2+32);return{d:bn(r),qs:new Uint8Array(n)}}function Eo(e,t){const r=t>>2,n=(t&3)<<1;return e[r]>>n&3}function Lo(e){const t=new Float32Array(rt);for(let r=0;r<rt;r++){const n=Eo(e.qs,r);t[r]=(n-1)*e.d}return t}var _n,Ao,wn=A({m15(){"use strict";Oe(),_n=new Float32Array(1),Ao=new Uint32Array(_n.buffer)}}),ut,To,xo,Po=A({m16(){"use strict";ut="Numerics ported from owner-owned fork",To=`/* SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
  * \xA9 2026 Aitherium, LLC. Original work.
- * ${PROVENANCE_MARKER}: github.com/PrismML-Eng/llama.cpp @ branch "prism"
+ * ${ut}: github.com/PrismML-Eng/llama.cpp @ branch "prism"
  * GGUF container: public spec ggml-org/ggml docs/gguf.md (format v3).
  * NO third-party WebGPU kernel source was consulted (HF Spaces bonsai-* excluded).
- */`;
-    PROVENANCE_HEADER_WGSL = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+ */`,xo=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
-// ${PROVENANCE_MARKER}: github.com/PrismML-Eng/llama.cpp @ branch "prism"
-// NO third-party WebGPU kernel source was consulted (HF Spaces bonsai-* excluded).`;
-  }
-});var init_bonsai = __esm({
-  "m17"() {
-    "use strict";
-    init_runtime();
-    init_reader();
-    init_parser();
-    init_metadata();
-    init_types();
-    init_registry();
-    init_config();
-    init_reference();
-    init_pipelines();
-    init_load();
-    init_chat_template();
-    init_provenance();
-  }
-});function classifyAdapter(hint) {
-  if (hint?.isFallbackAdapter === true) return "software";
-  const vendor = hint?.vendor?.trim().toLowerCase();
-  if (!vendor) return "unknown";
-  if (SOFTWARE_VENDORS.includes(vendor)) return "software";
-  if (INTEGRATED_VENDORS.includes(vendor)) return "integrated";
-  return "unknown";
-}
-function maxDispatchesPerSubmit(cls, opts) {
-  if (opts?.mobile) return 4;
-  switch (cls) {
-    case "software":
-    case "integrated":
-      return 8;
-    // An unknown adapter is NOT assumed weak — Safari and Firefox expose no adapter info
-    // at all, and throttling every one of them to protect a class we cannot see would slow
-    // the majority to guard the minority. Unknown keeps the discrete path.
-    case "unknown":
-    case "discrete":
-    default:
-      return opts?.windowsTdr ? 64 : 0;
-  }
-}
-var INTEGRATED_VENDORS, SOFTWARE_VENDORS;
-var init_gpu_class = __esm({
-  "m18"() {
-    "use strict";
-    INTEGRATED_VENDORS = ["intel", "arm", "qualcomm", "imgtec"];
-    SOFTWARE_VENDORS = ["microsoft"];
-  }
-});function ceilDiv(a, b) {
-  return Math.floor((a + b - 1) / b);
-}
-function setSubmitBudget(device, maxDispatches) {
-  submitBudget.set(device, Math.max(0, Math.floor(maxDispatches)));
-}
-function beginBatch(device) {
-  if (!activeBatch.has(device)) {
-    activeBatch.set(device, { enc: device.createCommandEncoder(), dispatches: 0 });
-  }
-}
-function flushBatch(device) {
-  const b = activeBatch.get(device);
-  if (!b) return;
-  activeBatch.delete(device);
-  device.queue.submit([b.enc.finish()]);
-}
-function beginCopies(device) {
-  const batch = activeBatch.get(device);
-  if (batch) return { enc: batch.enc, batched: true };
-  return { enc: device.createCommandEncoder(), batched: false };
-}
-function finishCopies(device, t) {
-  if (!t.batched) device.queue.submit([t.enc.finish()]);
-}
-function poolFor(device) {
-  let m = bufferPool.get(device);
-  if (!m) {
-    m = /* @__PURE__ */ new Map();
-    bufferPool.set(device, m);
-  }
-  return m;
-}
-function statsFor(device) {
-  let s = poolStats.get(device);
-  if (!s) {
-    s = { created: 0, reused: 0 };
-    poolStats.set(device, s);
-  }
-  return s;
-}
-function keyOf(usage, size) {
-  return `${usage}:${size}`;
-}
-function acquire(device, usage, size, label, queueInit = false) {
-  const pool = poolFor(device);
-  const key = keyOf(usage, size);
-  const free = pool.get(key);
-  const st = statsFor(device);
-  if (globalThis.__BONSAI_NO_POOL === true) {
-    st.created++;
-    return device.createBuffer({ size, usage, label });
-  }
-  if (free && free.length > 0) {
-    st.reused++;
-    const buf = free.pop();
-    if (queueInit) return buf;
-    const tgt = beginCopies(device);
-    tgt.enc.clearBuffer(buf, 0, size);
-    finishCopies(device, tgt);
-    return buf;
-  }
-  st.created++;
-  return device.createBuffer({ size, usage, label });
-}
-function deferDestroy(device, buf) {
-  let l = deferredDestroy.get(device);
-  if (!l) {
-    l = [];
-    deferredDestroy.set(device, l);
-  }
-  l.push(buf);
-}
-function flushDeferred(device) {
-  const l = deferredDestroy.get(device);
-  if (!l) return;
-  const pool = poolFor(device);
-  for (const b of l) {
-    const key = b[POOL_KEY];
-    if (key === void 0) {
-      try {
-        b.destroy();
-      } catch {
-      }
-      continue;
-    }
-    let list = pool.get(key);
-    if (!list) {
-      list = [];
-      pool.set(key, list);
-    }
-    list.push(b);
-  }
-  l.length = 0;
-}
-function createStorage(device, bytes, label, opts) {
-  const size = Math.max(4, align4(bytes));
-  const buf = acquire(device, STORAGE_USAGE, size, label, opts?.queueInit === true);
-  buf[POOL_KEY] = keyOf(STORAGE_USAGE, size);
-  return buf;
-}
-function createUniform(device, bytes, label) {
-  const size = Math.max(16, align4(bytes));
-  const buf = acquire(device, UNIFORM_USAGE, size, label, true);
-  buf[POOL_KEY] = keyOf(UNIFORM_USAGE, size);
-  return buf;
-}
-function align4(n) {
-  return n + (4 - n % 4) % 4;
-}
-function bindGroup(device, pipeline, buffers) {
-  return device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: buffers.map((b, i) => ({ binding: i, resource: { buffer: b } }))
-  });
-}
-function dispatch1D(device, pipeline, group, totalThreads, workgroupSize) {
-  const batch = activeBatch.get(device);
-  const enc = batch ? batch.enc : device.createCommandEncoder();
-  const pass = enc.beginComputePass();
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, group);
-  const groups = ceilDiv(totalThreads, workgroupSize);
-  if (groups <= MAX_WORKGROUPS_PER_DIM) {
-    pass.dispatchWorkgroups(groups);
-  } else {
-    const gx = MAX_WORKGROUPS_PER_DIM;
-    const gy = ceilDiv(groups, gx);
-    if (gy > MAX_WORKGROUPS_PER_DIM) {
-      throw new Error(
-        `bonsai-dispatch: ${groups} workgroups exceeds even a 2-D grid (${MAX_WORKGROUPS_PER_DIM}^2). This is a context-length bug upstream, not a dispatch bug \u2014 chunk the work.`
-      );
-    }
-    pass.dispatchWorkgroups(gx, gy);
-  }
-  pass.end();
-  if (!batch) {
-    device.queue.submit([enc.finish()]);
-    return;
-  }
-  batch.dispatches++;
-  const budget = submitBudget.get(device) ?? 0;
-  if (budget > 0 && batch.dispatches >= budget) {
-    console.debug(
-      `[bonsai] TDR budget limit reached: submitted ${batch.dispatches} dispatches, opening new batch to stay under GPU watchdog deadline`
-    );
-    activeBatch.delete(device);
-    device.queue.submit([batch.enc.finish()]);
-    activeBatch.set(device, { enc: device.createCommandEncoder(), dispatches: 0 });
-  }
-}
-function takeStaging(device, size) {
-  let bySize = stagingPool.get(device);
-  if (!bySize) {
-    bySize = /* @__PURE__ */ new Map();
-    stagingPool.set(device, bySize);
-  }
-  const free = bySize.get(size);
-  if (free && free.length) return free.pop();
-  return device.createBuffer({
-    size,
-    usage: BufferUsage.MAP_READ | BufferUsage.COPY_DST,
-    label: "readback"
-  });
-}
-function giveBackStaging(device, size, buf) {
-  const bySize = stagingPool.get(device);
-  if (!bySize) {
-    buf.destroy();
-    return;
-  }
-  let free = bySize.get(size);
-  if (!free) {
-    free = [];
-    bySize.set(size, free);
-  }
-  if (free.length >= 4) {
-    buf.destroy();
-    return;
-  }
-  free.push(buf);
-}
-async function readback(device, src, byteLength) {
-  flushBatch(device);
-  const size = align4(byteLength);
-  const staging = takeStaging(device, size);
-  const enc = device.createCommandEncoder();
-  enc.copyBufferToBuffer(src, 0, staging, 0, size);
-  device.queue.submit([enc.finish()]);
-  await staging.mapAsync(MapMode.READ);
-  const copy = staging.getMappedRange().slice(0, byteLength);
-  staging.unmap();
-  giveBackStaging(device, size, staging);
-  return copy;
-}
-function packUniform(fields) {
-  const buf = new ArrayBuffer(align16(fields.length * 4));
-  const dv = new DataView(buf);
-  fields.forEach((f, i) => {
-    if (f.u32 !== void 0) dv.setUint32(i * 4, f.u32, true);
-    else dv.setFloat32(i * 4, f.f32 ?? 0, true);
-  });
-  return buf;
-}
-function align16(n) {
-  return n + (16 - n % 16) % 16;
-}
-var activeBatch, submitBudget, deferredDestroy, bufferPool, poolStats, POOL_KEY, STORAGE_USAGE, UNIFORM_USAGE, MAX_WORKGROUPS_PER_DIM, stagingPool;
-var init_dispatch = __esm({
-  "m19"() {
-    "use strict";
-    init_gpu_min();
-    activeBatch = /* @__PURE__ */ new WeakMap();
-    submitBudget = /* @__PURE__ */ new WeakMap();
-    deferredDestroy = /* @__PURE__ */ new WeakMap();
-    bufferPool = /* @__PURE__ */ new WeakMap();
-    poolStats = /* @__PURE__ */ new WeakMap();
-    POOL_KEY = Symbol("aither.poolKey");
-    STORAGE_USAGE = BufferUsage.STORAGE | BufferUsage.COPY_DST | BufferUsage.COPY_SRC;
-    UNIFORM_USAGE = BufferUsage.UNIFORM | BufferUsage.COPY_DST;
-    MAX_WORKGROUPS_PER_DIM = 65535;
-    stagingPool = /* @__PURE__ */ new WeakMap();
-  }
-});function classifyAdapter2(hint) {
-  if (hint?.isFallbackAdapter === true) return "software";
-  const vendor = hint?.vendor?.trim().toLowerCase();
-  if (!vendor) return "unknown";
-  if (SOFTWARE_VENDORS2.includes(vendor)) return "software";
-  if (INTEGRATED_VENDORS2.includes(vendor)) return "integrated";
-  return "unknown";
-}
-function mayAutoBoot(cls) {
-  if (isMobileDevice()) return false;
-  return cls !== "software";
-}
-function isMobileDevice() {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent ?? "";
-  if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua)) return true;
-  const touch = navigator.maxTouchPoints ?? 0;
-  return /Macintosh/i.test(ua) && touch > 1;
-}
-function gpuLaneAllowed() {
-  return !isMobileDevice();
-}
-function autoBootAllowed(hint) {
-  if (isMobileDevice()) return false;
-  if (!hint) return true;
-  return mayAutoBoot(classifyAdapter2(hint));
-}
-var FIRST_TOKEN_FAIL_MS, LOAD_FAIL_MS, INTEGRATED_VENDORS2, SOFTWARE_VENDORS2;
-var init_device_class = __esm({
-  "m20"() {
-    "use strict";
-    FIRST_TOKEN_FAIL_MS = 6e4;
-    LOAD_FAIL_MS = 18e4;
-    INTEGRATED_VENDORS2 = ["intel", "arm", "qualcomm", "imgtec"];
-    SOFTWARE_VENDORS2 = ["microsoft"];
-  }
-});function getBonsaiModel(id) {
-  return BONSAI_MODELS_INFO.find((m) => m.id === id);
-}
-function resolveBonsaiUrl(id) {
-  const m = getBonsaiModel(id) ?? getBonsaiModel(DEFAULT_BONSAI_MODEL_ID);
-  return bonsaiMirrorUrl(m);
-}
-function bonsaiMirrorUrl(m) {
-  const file = m.url.split("/").pop();
-  if (!file) return m.url;
-  return `${BONSAI_MIRROR.replace(/\/+$/, "")}/${file}`;
-}
-function suggestBonsaiModelId() {
-  if (typeof navigator === "undefined") return DEFAULT_BONSAI_MODEL_ID;
-  const nav = navigator;
-  if (nav.connection?.saveData) return "bonsai-1.7b";
-  const slowLink = nav.connection?.effectiveType && /2g/.test(nav.connection.effectiveType);
-  if (slowLink) return "bonsai-1.7b";
-  const mem = nav.deviceMemory ?? 4;
-  const mobile = isMobileDevice();
-  if (mobile) return mem >= 6 ? "bonsai-4b" : "bonsai-1.7b";
-  if (mem >= 8) return "bonsai-8b";
-  return DEFAULT_BONSAI_MODEL_ID;
-}
-function pickBonsaiContext(model) {
-  const mem = typeof navigator !== "undefined" && navigator.deviceMemory || 4;
-  const tier = mem >= 16 ? 32768 : mem >= 8 ? 16384 : mem >= 4 ? 8192 : 4096;
-  return Math.min(tier, model.contextWindow);
-}
-var HF_PRISM, BONSAI_MIRROR, BONSAI_MODELS_INFO, DEFAULT_BONSAI_MODEL_ID;
-var init_bonsai_models = __esm({
-  "m21"() {
-    "use strict";
-    init_device_class();
-    HF_PRISM = "https://huggingface.co/prism-ml";
-    BONSAI_MIRROR = "https://weights.aitherium.com";
-    BONSAI_MODELS_INFO = [
-      {
-        id: "bonsai-1.7b",
-        label: "Bonsai 1.7B",
-        params: "1.7B",
-        sizeMb: 236,
-        url: `${HF_PRISM}/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B-Q1_0.gguf`,
-        contextWindow: 32768,
-        blurb: "The lightest size \u2014 236 MB, runs on phones and older laptops.",
-        arch: "qwen3"
-      },
-      {
-        id: "bonsai-4b",
-        label: "Bonsai 4B",
-        params: "4B",
-        sizeMb: 545,
-        url: `${HF_PRISM}/Bonsai-4B-gguf/resolve/main/Bonsai-4B-Q1_0.gguf`,
-        contextWindow: 32768,
-        blurb: "Balanced: smarter than 1.7B, quick to download and run.",
-        arch: "qwen3"
-      },
-      {
-        id: "bonsai-8b",
-        label: "Bonsai 8B",
-        params: "8B",
-        sizeMb: 1104,
-        url: `${HF_PRISM}/Bonsai-8B-gguf/resolve/main/Bonsai-8B-Q1_0.gguf`,
-        contextWindow: 65536,
-        blurb: "Better reasoning, ~1 GB. Desktop GPU recommended.",
-        arch: "qwen3"
-      },
-      {
-        id: "bonsai-27b-text",
-        label: "Bonsai 27B (Reasoning)",
-        params: "27B",
-        sizeMb: 3627,
-        url: `${HF_PRISM}/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf`,
-        contextWindow: 262144,
-        blurb: "Full reasoning brain. 3.6 GB, needs a real desktop GPU.",
-        arch: "qwen35"
-      }
-    ];
-    DEFAULT_BONSAI_MODEL_ID = "bonsai-4b";
-  }
-});var wgsl_sources_exports = {};
-__export(wgsl_sources_exports, {
-  WGSL_SOURCES: () => WGSL_SOURCES
-});
-var CAUSAL_CONV1D, DELTANET, DELTANET_GATE, DELTANET_SEQ, ELEMENTWISE, ELEMENTWISE_INPLACE, KV_QUANT_4BIT, LOGIT_TOPK, Q1_0_DEQUANT, Q1_0_Q8_0_MATMUL, Q2_0_DEQUANT, Q2_0_Q8_0_MATMUL, QUANTIZE_Q8_0, RMSNORM, ROPE_IMROPE, SAMPLING, SOFTMAX_ATTN, SOFTMAX_ATTN_BATCHED, SWIGLU, VAE_OPS, WGSL_SOURCES;
-var init_wgsl_sources = __esm({
-  "m22"() {
-    "use strict";
-    CAUSAL_CONV1D = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// ${ut}: github.com/PrismML-Eng/llama.cpp @ branch "prism"
+// NO third-party WebGPU kernel source was consulted (HF Spaces bonsai-* excluded).`}}),Oo=A({m17(){"use strict";wo(),Mt(),Ht(),Xt(),Oe(),Jt(),Zt(),wn(),fn(),an(),rn(),Po()}});function Bo(e){if(e?.isFallbackAdapter===!0)return"software";const t=e?.vendor?.trim().toLowerCase();return t?kn.includes(t)?"software":vn.includes(t)?"integrated":"unknown":"unknown"}function qo(e,t){if(t?.mobile)return 4;switch(e){case"software":case"integrated":return 8;default:return t?.windowsTdr?64:0}}var vn,kn,No=A({m18(){"use strict";vn=["intel","arm","qualcomm","imgtec"],kn=["microsoft"]}});function yn(e,t){return Math.floor((e+t-1)/t)}function Ro(e,t){ht.set(e,Math.max(0,Math.floor(t)))}function Sn(e){ae.has(e)||ae.set(e,{enc:e.createCommandEncoder(),dispatches:0})}function lt(e){const t=ae.get(e);t&&(ae.delete(e),e.queue.submit([t.enc.finish()]))}function Ue(e){const t=ae.get(e);return t?{enc:t.enc,batched:!0}:{enc:e.createCommandEncoder(),batched:!1}}function Ke(e,t){t.batched||e.queue.submit([t.enc.finish()])}function En(e){let t=pt.get(e);return t||(t=new Map,pt.set(e,t)),t}function Do(e){let t=mt.get(e);return t||(t={created:0,reused:0},mt.set(e,t)),t}function ct(e,t){return`${e}:${t}`}function Ln(e,t,r,n,o=!1){const i=En(e),s=ct(t,r),a=i.get(s),u=Do(e);if(globalThis.__BONSAI_NO_POOL===!0)return u.created++,e.createBuffer({size:r,usage:t,label:n});if(a&&a.length>0){u.reused++;const d=a.pop();if(o)return d;const l=Ue(e);return l.enc.clearBuffer(d,0,r),Ke(e,l),d}return u.created++,e.createBuffer({size:r,usage:t,label:n})}function An(e,t){let r=Je.get(e);r||(r=[],Je.set(e,r)),r.push(t)}function Tn(e){const t=Je.get(e);if(!t)return;const r=En(e);for(const n of t){const o=n[Ze];if(o===void 0){try{n.destroy()}catch{}continue}let i=r.get(o);i||(i=[],r.set(o,i)),i.push(n)}t.length=0}function H(e,t,r,n){const o=Math.max(4,dt(t)),i=Ln(e,ft,o,r,n?.queueInit===!0);return i[Ze]=ct(ft,o),i}function Go(e,t,r){const n=Math.max(16,dt(t)),o=Ln(e,gt,n,r,!0);return o[Ze]=ct(gt,n),o}function dt(e){return e+(4-e%4)%4}function M(e,t,r){return e.createBindGroup({layout:t.getBindGroupLayout(0),entries:r.map((n,o)=>({binding:o,resource:{buffer:n}}))})}function W(e,t,r,n,o){const i=ae.get(e),s=i?i.enc:e.createCommandEncoder(),a=s.beginComputePass();a.setPipeline(t),a.setBindGroup(0,r);const u=yn(n,o);if(u<=Fe)a.dispatchWorkgroups(u);else{const l=Fe,c=yn(u,l);if(c>Fe)throw new Error(`bonsai-dispatch: ${u} workgroups exceeds even a 2-D grid (${Fe}^2). This is a context-length bug upstream, not a dispatch bug \u2014 chunk the work.`);a.dispatchWorkgroups(l,c)}if(a.end(),!i){e.queue.submit([s.finish()]);return}i.dispatches++;const d=ht.get(e)??0;d>0&&i.dispatches>=d&&(console.debug(`[bonsai] TDR budget limit reached: submitted ${i.dispatches} dispatches, opening new batch to stay under GPU watchdog deadline`),ae.delete(e),e.queue.submit([i.enc.finish()]),ae.set(e,{enc:e.createCommandEncoder(),dispatches:0}))}function $o(e,t){let r=et.get(e);r||(r=new Map,et.set(e,r));const n=r.get(t);return n&&n.length?n.pop():e.createBuffer({size:t,usage:I.MAP_READ|I.COPY_DST,label:"readback"})}function Io(e,t,r){const n=et.get(e);if(!n){r.destroy();return}let o=n.get(t);if(o||(o=[],n.set(t,o)),o.length>=4){r.destroy();return}o.push(r)}async function Se(e,t,r){lt(e);const n=dt(r),o=$o(e,n),i=e.createCommandEncoder();i.copyBufferToBuffer(t,0,o,0,n),e.queue.submit([i.finish()]),await o.mapAsync(sn.READ);const s=o.getMappedRange().slice(0,r);return o.unmap(),Io(e,n,o),s}function Mo(e){const t=new ArrayBuffer(Wo(e.length*4)),r=new DataView(t);return e.forEach((n,o)=>{n.u32!==void 0?r.setUint32(o*4,n.u32,!0):r.setFloat32(o*4,n.f32??0,!0)}),t}function Wo(e){return e+(16-e%16)%16}var ae,ht,Je,pt,mt,Ze,ft,gt,Fe,et,Ee=A({m19(){"use strict";Ve(),ae=new WeakMap,ht=new WeakMap,Je=new WeakMap,pt=new WeakMap,mt=new WeakMap,Ze=Symbol("aither.poolKey"),ft=I.STORAGE|I.COPY_DST|I.COPY_SRC,gt=I.UNIFORM|I.COPY_DST,Fe=65535,et=new WeakMap}});function xn(e){if(e?.isFallbackAdapter===!0)return"software";const t=e?.vendor?.trim().toLowerCase();return t?qn.includes(t)?"software":Bn.includes(t)?"integrated":"unknown":"unknown"}function Co(e){return Be()?!1:e!=="software"}function Be(){if(typeof navigator>"u")return!1;const e=navigator.userAgent??"";if(/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(e))return!0;const t=navigator.maxTouchPoints??0;return/Macintosh/i.test(e)&&t>1}function Uo(){return!Be()}function Ko(e){return Be()?!1:e?Co(xn(e)):!0}var Pn,On,Bn,qn,bt=A({m20(){"use strict";Pn=6e4,On=18e4,Bn=["intel","arm","qualcomm","imgtec"],qn=["microsoft"]}});function _t(e){return wt.find(t=>t.id===e)}function Nn(e){const t=_t(e)??_t(ze);return Fo(t)}function Fo(e){const t=e.url.split("/").pop();return t?`${Rn.replace(/\/+$/,"")}/${t}`:e.url}function Qo(){if(typeof navigator>"u")return ze;const e=navigator;if(e.connection?.saveData||e.connection?.effectiveType&&/2g/.test(e.connection.effectiveType))return"bonsai-1.7b";const r=e.deviceMemory??4;return Be()?r>=6?"bonsai-4b":"bonsai-1.7b":r>=8?"bonsai-8b":ze}function zo(e){const t=typeof navigator<"u"&&navigator.deviceMemory||4,r=t>=16?32768:t>=8?16384:t>=4?8192:4096;return Math.min(r,e.contextWindow)}var Qe,Rn,wt,ze,Dn=A({m21(){"use strict";bt(),Qe="https://huggingface.co/prism-ml",Rn="https://weights.aitherium.com",wt=[{id:"bonsai-1.7b",label:"Bonsai 1.7B",params:"1.7B",sizeMb:236,url:`${Qe}/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B-Q1_0.gguf`,contextWindow:32768,blurb:"The lightest size \u2014 236 MB, runs on phones and older laptops.",arch:"qwen3"},{id:"bonsai-4b",label:"Bonsai 4B",params:"4B",sizeMb:545,url:`${Qe}/Bonsai-4B-gguf/resolve/main/Bonsai-4B-Q1_0.gguf`,contextWindow:32768,blurb:"Balanced: smarter than 1.7B, quick to download and run.",arch:"qwen3"},{id:"bonsai-8b",label:"Bonsai 8B",params:"8B",sizeMb:1104,url:`${Qe}/Bonsai-8B-gguf/resolve/main/Bonsai-8B-Q1_0.gguf`,contextWindow:65536,blurb:"Better reasoning, ~1 GB. Desktop GPU recommended.",arch:"qwen3"},{id:"bonsai-27b-text",label:"Bonsai 27B (Reasoning)",params:"27B",sizeMb:3627,url:`${Qe}/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf`,contextWindow:262144,blurb:"Full reasoning brain. 3.6 GB, needs a real desktop GPU.",arch:"qwen35"}],ze="bonsai-4b"}}),Gn={};re(Gn,{WGSL_SOURCES:()=>rr});var $n,In,Mn,Wn,Cn,Un,Kn,Fn,Qn,zn,jn,Hn,Yn,Xn,Vn,Jn,Zn,er,tr,nr,rr,jo=A({m22(){"use strict";$n=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -1963,8 +100,7 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
   }
   out[idx] = sum;   // activation applied by caller (SiLU) per fork ordering
 }
-`;
-    DELTANET = `// ============================================================================
+`,In=`// ============================================================================
 // DEPRECATED / NOT ON THE LIVE PATH (verified 2026-07-24).
 //
 // Token generation uses deltanet_seq.wgsl. This kernel's only dispatcher is
@@ -2056,8 +192,7 @@ fn main() {
 
   for (var j : u32 = 0u; j < dv; j = j + 1u) { out[j] = o[j]; }
 }
-`;
-    DELTANET_GATE = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Mn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2107,9 +242,93 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
   g_out[idx]    = exp(a);            // (0,1]
   beta_out[idx] = 1.0 / (1.0 + exp(-beta_raw[idx]));
 }
-`;
-    DELTANET_SEQ = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML\n// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).\n// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).\n//\n// Gated DeltaNet (Qwen3-Next) sequential recurrence \u2014 the WHOLE token sequence for a\n// layer in ONE dispatch, no host readback. Per v-head state S is [d_k \xD7 d_v] (d_k==d_v==\n// head_dim). q/k are grouped: each v-head h reads the k/q of k-head (h / v_per_k). q,k are\n// already L2-normalized; v is already conv+SiLU'd; g (decay) and beta (write strength) are\n// precomputed per (token,v-head) by deltanet_gate.\n//\n// Recurrence, per token t, per v-head h (from modeling_qwen3_next GatedDeltaNet):\n//   Sdec[i,j] = g_t * S[i,j]                    (scalar decay per head/step)\n//   kv[j]     = sum_i Sdec[i,j] * k[i]          (retrieve current key)\n//   err[j]    = v[j] - kv[j]\n//   S[i,j]    = Sdec[i,j] + k[i] * (beta_t * err[j])   (rank-1 write)\n//   o[j]      = (sum_i S[i,j] * q[i]) / sqrt(d_k)      (read-out)\n//\n// Parallelism: one thread per (v-head h, value-column j). Thread (h,j) owns column j of\n// head h's state \u2014 columns are disjoint across threads, so the update is race-free and the\n// per-token loop runs inside the thread with NO barriers. Grid = heads * head_dim threads.\n\nstruct SeqP {\n  n_tokens  : u32,\n  v_heads   : u32,   // num_v_heads (48)\n  k_heads   : u32,   // num_k_heads (16)\n  head_dim  : u32,   // d_k == d_v (128)\n  v_per_k   : u32,   // v_heads / k_heads (3)\n  _p0 : u32, _p1 : u32, _p2 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>        q     : array<f32>;   // [n_tokens * k_heads * head_dim]\n@group(0) @binding(1) var<storage, read>        k     : array<f32>;   // [n_tokens * k_heads * head_dim]\n@group(0) @binding(2) var<storage, read>        v     : array<f32>;   // [n_tokens * v_heads * head_dim]\n@group(0) @binding(3) var<storage, read>        gdec  : array<f32>;   // [n_tokens * v_heads]\n@group(0) @binding(4) var<storage, read>        beta  : array<f32>;   // [n_tokens * v_heads]\n@group(0) @binding(5) var<storage, read_write>  state : array<f32>;   // [v_heads * head_dim * head_dim]\n@group(0) @binding(6) var<storage, read_write>  out   : array<f32>;   // [n_tokens * v_heads * head_dim]\n@group(0) @binding(7) var<uniform>              p     : SeqP;\n\n@compute @workgroup_size(64)\nfn main(@builtin(workgroup_id) wg_ : vec3<u32>,\n        @builtin(local_invocation_id) lid_ : vec3<u32>,\n        @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  let d   = p.head_dim;\n  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.\n  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension\n  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to\n  // EXACTLY the old expression, so the working 27B numerics are untouched.\n  let idx = (wg_.x + wg_.y * nwg_.x) * 64u + lid_.x;\n  let total = p.v_heads * d;\n  if (idx >= total) { return; }\n\n  let h = idx / d;            // v-head\n  let j = idx % d;            // value column this thread owns\n  // Fork-verified GQA mapping: ggml_repeat_4d TILES cyclically (dst head i1*ne01+k1\n  // reads src head k1), so v-head h uses k-head (h % k_heads) - NOT h / v_per_k\n  // (interleave). The old mapping paired 32 of 48 v-heads with the wrong q/k.\n  let kh = h % p.k_heads;     // shared k/q head for this v-head (cyclic, fork parity)\n  let sbase = h * d * d;      // base of head h's [d\xD7d] state\n  let inv_scale = inverseSqrt(f32(d));\n\n  for (var t : u32 = 0u; t < p.n_tokens; t = t + 1u) {\n    let qb = (t * p.k_heads + kh) * d;\n    let vb = (t * p.v_heads + h) * d;\n    let g  = gdec[t * p.v_heads + h];\n    let b  = beta[t * p.v_heads + h];\n\n    // pass 1: kv[j] = sum_i (g*S[i,j]) * k[i]\n    var kv : f32 = 0.0;\n    for (var i : u32 = 0u; i < d; i = i + 1u) {\n      kv = kv + g * state[sbase + i * d + j] * k[qb + i];\n    }\n    let err = v[vb + j] - kv;\n\n    // pass 2: write S[:,j] and read out o[j] = (sum_i S_new[i,j] * q[i]) / sqrt(d)\n    var o : f32 = 0.0;\n    for (var i : u32 = 0u; i < d; i = i + 1u) {\n      let s_new = g * state[sbase + i * d + j] + k[qb + i] * (b * err);\n      state[sbase + i * d + j] = s_new;\n      o = o + s_new * q[qb + i];\n    }\n    out[vb + j] = o * inv_scale;\n  }\n}\n";
-    ELEMENTWISE = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Wn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
+// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
+// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).
+//
+// Gated DeltaNet (Qwen3-Next) sequential recurrence \u2014 the WHOLE token sequence for a
+// layer in ONE dispatch, no host readback. Per v-head state S is [d_k \xD7 d_v] (d_k==d_v==
+// head_dim). q/k are grouped: each v-head h reads the k/q of k-head (h / v_per_k). q,k are
+// already L2-normalized; v is already conv+SiLU'd; g (decay) and beta (write strength) are
+// precomputed per (token,v-head) by deltanet_gate.
+//
+// Recurrence, per token t, per v-head h (from modeling_qwen3_next GatedDeltaNet):
+//   Sdec[i,j] = g_t * S[i,j]                    (scalar decay per head/step)
+//   kv[j]     = sum_i Sdec[i,j] * k[i]          (retrieve current key)
+//   err[j]    = v[j] - kv[j]
+//   S[i,j]    = Sdec[i,j] + k[i] * (beta_t * err[j])   (rank-1 write)
+//   o[j]      = (sum_i S[i,j] * q[i]) / sqrt(d_k)      (read-out)
+//
+// Parallelism: one thread per (v-head h, value-column j). Thread (h,j) owns column j of
+// head h's state \u2014 columns are disjoint across threads, so the update is race-free and the
+// per-token loop runs inside the thread with NO barriers. Grid = heads * head_dim threads.
+
+struct SeqP {
+  n_tokens  : u32,
+  v_heads   : u32,   // num_v_heads (48)
+  k_heads   : u32,   // num_k_heads (16)
+  head_dim  : u32,   // d_k == d_v (128)
+  v_per_k   : u32,   // v_heads / k_heads (3)
+  _p0 : u32, _p1 : u32, _p2 : u32,
+};
+
+@group(0) @binding(0) var<storage, read>        q     : array<f32>;   // [n_tokens * k_heads * head_dim]
+@group(0) @binding(1) var<storage, read>        k     : array<f32>;   // [n_tokens * k_heads * head_dim]
+@group(0) @binding(2) var<storage, read>        v     : array<f32>;   // [n_tokens * v_heads * head_dim]
+@group(0) @binding(3) var<storage, read>        gdec  : array<f32>;   // [n_tokens * v_heads]
+@group(0) @binding(4) var<storage, read>        beta  : array<f32>;   // [n_tokens * v_heads]
+@group(0) @binding(5) var<storage, read_write>  state : array<f32>;   // [v_heads * head_dim * head_dim]
+@group(0) @binding(6) var<storage, read_write>  out   : array<f32>;   // [n_tokens * v_heads * head_dim]
+@group(0) @binding(7) var<uniform>              p     : SeqP;
+
+@compute @workgroup_size(64)
+fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
+        @builtin(local_invocation_id) lid_ : vec3<u32>,
+        @builtin(num_workgroups) nwg_ : vec3<u32>) {
+  let d   = p.head_dim;
+  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.
+  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension
+  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to
+  // EXACTLY the old expression, so the working 27B numerics are untouched.
+  let idx = (wg_.x + wg_.y * nwg_.x) * 64u + lid_.x;
+  let total = p.v_heads * d;
+  if (idx >= total) { return; }
+
+  let h = idx / d;            // v-head
+  let j = idx % d;            // value column this thread owns
+  // Fork-verified GQA mapping: ggml_repeat_4d TILES cyclically (dst head i1*ne01+k1
+  // reads src head k1), so v-head h uses k-head (h % k_heads) - NOT h / v_per_k
+  // (interleave). The old mapping paired 32 of 48 v-heads with the wrong q/k.
+  let kh = h % p.k_heads;     // shared k/q head for this v-head (cyclic, fork parity)
+  let sbase = h * d * d;      // base of head h's [d\xD7d] state
+  let inv_scale = inverseSqrt(f32(d));
+
+  for (var t : u32 = 0u; t < p.n_tokens; t = t + 1u) {
+    let qb = (t * p.k_heads + kh) * d;
+    let vb = (t * p.v_heads + h) * d;
+    let g  = gdec[t * p.v_heads + h];
+    let b  = beta[t * p.v_heads + h];
+
+    // pass 1: kv[j] = sum_i (g*S[i,j]) * k[i]
+    var kv : f32 = 0.0;
+    for (var i : u32 = 0u; i < d; i = i + 1u) {
+      kv = kv + g * state[sbase + i * d + j] * k[qb + i];
+    }
+    let err = v[vb + j] - kv;
+
+    // pass 2: write S[:,j] and read out o[j] = (sum_i S_new[i,j] * q[i]) / sqrt(d)
+    var o : f32 = 0.0;
+    for (var i : u32 = 0u; i < d; i = i + 1u) {
+      let s_new = g * state[sbase + i * d + j] + k[qb + i] * (b * err);
+      state[sbase + i * d + j] = s_new;
+      o = o + s_new * q[qb + i];
+    }
+    out[vb + j] = o * inv_scale;
+  }
+}
+`,Cn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2142,9 +361,34 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
     default: { out[i] = a[i]; }          // copy
   }
 }
-`;
-    ELEMENTWISE_INPLACE = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// In-place elementwise (io = io OP b) \u2014 single read_write binding for the accumulator to\n// avoid the read/read_write aliasing WebGPU rejects. Pairs with elementwise.wgsl.\n// op: 0=add, 1=mul, 2=copy(no-op), 3=silu (unary: io = io*sigmoid(io), b ignored).\nstruct EW { n : u32, op : u32, _p0 : u32, _p1 : u32 };\n@group(0) @binding(0) var<storage, read_write> io : array<f32>;\n@group(0) @binding(1) var<storage, read>       b  : array<f32>;\n@group(0) @binding(2) var<uniform>             p  : EW;\n@compute @workgroup_size(256)\nfn main(@builtin(workgroup_id) wg_ : vec3<u32>,\n        @builtin(local_invocation_id) lid_ : vec3<u32>,\n        @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.\n  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension\n  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to\n  // EXACTLY the old expression, so the working 27B numerics are untouched.\n  let i = (wg_.x + wg_.y * nwg_.x) * 256u + lid_.x;\n  if (i >= p.n) { return; }\n  switch (p.op) {\n    case 0u: { io[i] = io[i] + b[i]; }\n    case 1u: { io[i] = io[i] * b[i]; }\n    case 3u: { let z = io[i]; io[i] = z / (1.0 + exp(-z)); }   // SiLU\n    case 4u: { io[i] = io[i] / (1.0 + exp(-b[i])); }          // io *= sigmoid(b) (attn out-gate)\n    default: { }\n  }\n}\n";
-    KV_QUANT_4BIT = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Un=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// In-place elementwise (io = io OP b) \u2014 single read_write binding for the accumulator to
+// avoid the read/read_write aliasing WebGPU rejects. Pairs with elementwise.wgsl.
+// op: 0=add, 1=mul, 2=copy(no-op), 3=silu (unary: io = io*sigmoid(io), b ignored).
+struct EW { n : u32, op : u32, _p0 : u32, _p1 : u32 };
+@group(0) @binding(0) var<storage, read_write> io : array<f32>;
+@group(0) @binding(1) var<storage, read>       b  : array<f32>;
+@group(0) @binding(2) var<uniform>             p  : EW;
+@compute @workgroup_size(256)
+fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
+        @builtin(local_invocation_id) lid_ : vec3<u32>,
+        @builtin(num_workgroups) nwg_ : vec3<u32>) {
+  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.
+  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension
+  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to
+  // EXACTLY the old expression, so the working 27B numerics are untouched.
+  let i = (wg_.x + wg_.y * nwg_.x) * 256u + lid_.x;
+  if (i >= p.n) { return; }
+  switch (p.op) {
+    case 0u: { io[i] = io[i] + b[i]; }
+    case 1u: { io[i] = io[i] * b[i]; }
+    case 3u: { let z = io[i]; io[i] = z / (1.0 + exp(-z)); }   // SiLU
+    case 4u: { io[i] = io[i] / (1.0 + exp(-b[i])); }          // io *= sigmoid(b) (attn out-gate)
+    default: { }
+  }
+}
+`,Kn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2248,9 +492,125 @@ fn main(@builtin(workgroup_id) wg : vec3<u32>, @builtin(local_invocation_id) lid
     }
   }
 }
-`;
-    LOGIT_TOPK = '// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML\n// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).\n// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).\n//\n// SELECT THE TOP-K LOGITS ON THE GPU, so decode stops shipping the whole vocabulary to the\n// host every single token.\n//\n// \u2500\u2500 WHY (measured 2026-07-31) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// sampleToken() read back the ENTIRE logits row \u2014 vocab 248,320 x 4 B \u2248 993 KB \u2014 per token,\n// then picked the top-k in JS. Once the attention kernel was parallelised, that readback\n// became the single largest cost in the decode loop. Splitting the sample phase into its two\n// halves settled which half, and it was not the half the code comments worried about:\n//\n//     sample=83.9ms  [readback=83.4ms  select=0.4ms]     (4B, 1285-token context)\n//\n// The JS selection pass over a quarter-million floats costs FOUR TENTHS of a millisecond.\n// The transfer around it costs two hundred times that, and it scales with nothing useful \u2014\n// it is the same 993 KB whether the answer is one token or a thousand. So the fix is not a\n// better loop, it is to stop moving the data: select on the device and return a few hundred\n// bytes. Pooling the staging buffer first was tried and did NOT move the number.\n//\n// \u2500\u2500 HOW, AND WHY IT IS EXACT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// A parallel exact top-k is awkward in WGSL (no cross-workgroup reduction primitive), and a\n// per-block top-1 is NOT exact \u2014 the whole top-k can live inside one block. So: threshold,\n// then gather.\n//\n//   pass 1 `hist`   \u2014 histogram every logit into NBINS bins over a FIXED logit range.\n//                     Fixed, so no max-reduction pass is needed first; out-of-range values\n//                     clamp into the end bins, which keeps them findable rather than lost.\n//   host            \u2014 read NBINS u32 (4 KB), walk from the top bin down accumulating counts\n//                     until at least K have been seen. That bin\'s lower edge is a threshold\n//                     T with a PROVEN property: at least K logits are >= T.\n//   pass 2 `gather` \u2014 append every (index, value) with value >= T into a compact list via an\n//                     atomic counter. Read back only the counter and that list.\n//\n// Every logit >= T is collected, and at least K logits are >= T, so the true top-K is a\n// SUBSET of what comes back. The host then does an exact top-k over a few hundred candidates\n// instead of 248,320 \u2014 the same code that already cost 0.4 ms, now on a smaller input.\n//\n// OVERFLOW IS NOT SILENTLY WRONG. If more candidates clear T than the output can hold, the\n// gather writes what fits and the counter keeps counting, so the host sees count > capacity\n// and FALLS BACK to the full readback. That is slow and correct, which is the right way\n// round; dropping candidates would silently change which token is sampled, and a sampling\n// bug reads as the model being dumb rather than as a bug.\n\nstruct TopKP {\n  vocab      : u32,\n  n_bins     : u32,\n  lo         : f32,   // histogram range, in logit units\n  hi         : f32,\n  threshold  : f32,   // gather: keep values >= this (ignored by the hist entry point)\n  capacity   : u32,   // gather: max pairs the output buffers can hold\n  _p0 : u32, _p1 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>        logits  : array<f32>;\n@group(0) @binding(1) var<storage, read_write>  hist    : array<atomic<u32>>;\n@group(0) @binding(2) var<storage, read_write>  out_idx : array<u32>;\n@group(0) @binding(3) var<storage, read_write>  out_val : array<f32>;\n// [0] = number of candidates that cleared the threshold, INCLUDING any that did not fit.\n@group(0) @binding(4) var<storage, read_write>  counter : array<atomic<u32>>;\n@group(0) @binding(5) var<uniform>              p       : TopKP;\n\n// One thread per logit. 256 is a safe workgroup size everywhere (the spec guarantees 256).\nconst WG : u32 = 256u;\n\n/** Bin index for a logit value: bin 0 is the TOP of the range, so walking bins in ascending\n *  order walks logits in DESCENDING order \u2014 which is the direction the host needs. */\nfn bin_of(v : f32) -> u32 {\n  let span = max(p.hi - p.lo, 1e-6);\n  // Fraction from the TOP of the range.\n  let f = (p.hi - v) / span;\n  let b = i32(floor(f * f32(p.n_bins)));\n  // Clamp rather than discard: a logit above `hi` belongs in the top bin and a logit below\n  // `lo` in the bottom one. Discarding out-of-range values would make the count wrong, and\n  // the threshold derived from it wrong, in the one case that matters most \u2014 an unusually\n  // confident token sitting above the assumed range.\n  return u32(clamp(b, 0, i32(p.n_bins) - 1));\n}\n\n@compute @workgroup_size(256)\nfn hist_main(@builtin(global_invocation_id) gid : vec3<u32>,\n             @builtin(num_workgroups) nwg : vec3<u32>) {\n  // Grid-stride, so the dispatch size does not have to divide the vocabulary and a 2-D\n  // workgroup grid (dispatch1D folds past 65535) still covers every element exactly once.\n  let stride = nwg.x * nwg.y * WG;\n  let start = gid.x + gid.y * nwg.x * WG;\n  var i = start;\n  loop {\n    if (i >= p.vocab) { break; }\n    atomicAdd(&hist[bin_of(logits[i])], 1u);\n    i = i + stride;\n  }\n}\n\n@compute @workgroup_size(256)\nfn gather_main(@builtin(global_invocation_id) gid : vec3<u32>,\n               @builtin(num_workgroups) nwg : vec3<u32>) {\n  let stride = nwg.x * nwg.y * WG;\n  let start = gid.x + gid.y * nwg.x * WG;\n  var i = start;\n  loop {\n    if (i >= p.vocab) { break; }\n    let v = logits[i];\n    if (v >= p.threshold) {\n      // The counter is incremented even when the slot does not fit, so the host can tell\n      // "collected everything" from "there were more than we could hold" and fall back.\n      let slot = atomicAdd(&counter[0], 1u);\n      if (slot < p.capacity) {\n        out_idx[slot] = i;\n        out_val[slot] = v;\n      }\n    }\n    i = i + stride;\n  }\n}\n';
-    Q1_0_DEQUANT = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Fn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
+// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
+// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).
+//
+// SELECT THE TOP-K LOGITS ON THE GPU, so decode stops shipping the whole vocabulary to the
+// host every single token.
+//
+// \u2500\u2500 WHY (measured 2026-07-31) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// sampleToken() read back the ENTIRE logits row \u2014 vocab 248,320 x 4 B \u2248 993 KB \u2014 per token,
+// then picked the top-k in JS. Once the attention kernel was parallelised, that readback
+// became the single largest cost in the decode loop. Splitting the sample phase into its two
+// halves settled which half, and it was not the half the code comments worried about:
+//
+//     sample=83.9ms  [readback=83.4ms  select=0.4ms]     (4B, 1285-token context)
+//
+// The JS selection pass over a quarter-million floats costs FOUR TENTHS of a millisecond.
+// The transfer around it costs two hundred times that, and it scales with nothing useful \u2014
+// it is the same 993 KB whether the answer is one token or a thousand. So the fix is not a
+// better loop, it is to stop moving the data: select on the device and return a few hundred
+// bytes. Pooling the staging buffer first was tried and did NOT move the number.
+//
+// \u2500\u2500 HOW, AND WHY IT IS EXACT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// A parallel exact top-k is awkward in WGSL (no cross-workgroup reduction primitive), and a
+// per-block top-1 is NOT exact \u2014 the whole top-k can live inside one block. So: threshold,
+// then gather.
+//
+//   pass 1 \`hist\`   \u2014 histogram every logit into NBINS bins over a FIXED logit range.
+//                     Fixed, so no max-reduction pass is needed first; out-of-range values
+//                     clamp into the end bins, which keeps them findable rather than lost.
+//   host            \u2014 read NBINS u32 (4 KB), walk from the top bin down accumulating counts
+//                     until at least K have been seen. That bin's lower edge is a threshold
+//                     T with a PROVEN property: at least K logits are >= T.
+//   pass 2 \`gather\` \u2014 append every (index, value) with value >= T into a compact list via an
+//                     atomic counter. Read back only the counter and that list.
+//
+// Every logit >= T is collected, and at least K logits are >= T, so the true top-K is a
+// SUBSET of what comes back. The host then does an exact top-k over a few hundred candidates
+// instead of 248,320 \u2014 the same code that already cost 0.4 ms, now on a smaller input.
+//
+// OVERFLOW IS NOT SILENTLY WRONG. If more candidates clear T than the output can hold, the
+// gather writes what fits and the counter keeps counting, so the host sees count > capacity
+// and FALLS BACK to the full readback. That is slow and correct, which is the right way
+// round; dropping candidates would silently change which token is sampled, and a sampling
+// bug reads as the model being dumb rather than as a bug.
+
+struct TopKP {
+  vocab      : u32,
+  n_bins     : u32,
+  lo         : f32,   // histogram range, in logit units
+  hi         : f32,
+  threshold  : f32,   // gather: keep values >= this (ignored by the hist entry point)
+  capacity   : u32,   // gather: max pairs the output buffers can hold
+  _p0 : u32, _p1 : u32,
+};
+
+@group(0) @binding(0) var<storage, read>        logits  : array<f32>;
+@group(0) @binding(1) var<storage, read_write>  hist    : array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write>  out_idx : array<u32>;
+@group(0) @binding(3) var<storage, read_write>  out_val : array<f32>;
+// [0] = number of candidates that cleared the threshold, INCLUDING any that did not fit.
+@group(0) @binding(4) var<storage, read_write>  counter : array<atomic<u32>>;
+@group(0) @binding(5) var<uniform>              p       : TopKP;
+
+// One thread per logit. 256 is a safe workgroup size everywhere (the spec guarantees 256).
+const WG : u32 = 256u;
+
+/** Bin index for a logit value: bin 0 is the TOP of the range, so walking bins in ascending
+ *  order walks logits in DESCENDING order \u2014 which is the direction the host needs. */
+fn bin_of(v : f32) -> u32 {
+  let span = max(p.hi - p.lo, 1e-6);
+  // Fraction from the TOP of the range.
+  let f = (p.hi - v) / span;
+  let b = i32(floor(f * f32(p.n_bins)));
+  // Clamp rather than discard: a logit above \`hi\` belongs in the top bin and a logit below
+  // \`lo\` in the bottom one. Discarding out-of-range values would make the count wrong, and
+  // the threshold derived from it wrong, in the one case that matters most \u2014 an unusually
+  // confident token sitting above the assumed range.
+  return u32(clamp(b, 0, i32(p.n_bins) - 1));
+}
+
+@compute @workgroup_size(256)
+fn hist_main(@builtin(global_invocation_id) gid : vec3<u32>,
+             @builtin(num_workgroups) nwg : vec3<u32>) {
+  // Grid-stride, so the dispatch size does not have to divide the vocabulary and a 2-D
+  // workgroup grid (dispatch1D folds past 65535) still covers every element exactly once.
+  let stride = nwg.x * nwg.y * WG;
+  let start = gid.x + gid.y * nwg.x * WG;
+  var i = start;
+  loop {
+    if (i >= p.vocab) { break; }
+    atomicAdd(&hist[bin_of(logits[i])], 1u);
+    i = i + stride;
+  }
+}
+
+@compute @workgroup_size(256)
+fn gather_main(@builtin(global_invocation_id) gid : vec3<u32>,
+               @builtin(num_workgroups) nwg : vec3<u32>) {
+  let stride = nwg.x * nwg.y * WG;
+  let start = gid.x + gid.y * nwg.x * WG;
+  var i = start;
+  loop {
+    if (i >= p.vocab) { break; }
+    let v = logits[i];
+    if (v >= p.threshold) {
+      // The counter is incremented even when the slot does not fit, so the host can tell
+      // "collected everything" from "there were more than we could hold" and fall back.
+      let slot = atomicAdd(&counter[0], 1u);
+      if (slot < p.capacity) {
+        out_idx[slot] = i;
+        out_val[slot] = v;
+      }
+    }
+    i = i + stride;
+  }
+}
+`,Qn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2305,8 +665,7 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
     out_w[out_base + j] = select(-d, d, bit == 1u);
   }
 }
-`;
-    Q1_0_Q8_0_MATMUL = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,zn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2452,8 +811,7 @@ fn main(@builtin(local_invocation_id) lid : vec3<u32>,
 
   if (valid) { out[row * dims.n_cols + col] = result; }
 }
-`;
-    Q2_0_DEQUANT = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,jn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2512,8 +870,7 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
     out_w[out_base + j] = f32(i32(q) - 1) * d;
   }
 }
-`;
-    Q2_0_Q8_0_MATMUL = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Hn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2670,8 +1027,7 @@ fn main(@builtin(local_invocation_id) lid : vec3<u32>,
 
   if (valid) { out[row * dims.n_cols + col] = result; }
 }
-`;
-    QUANTIZE_Q8_0 = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Yn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2753,8 +1109,7 @@ fn main(@builtin(workgroup_id) wg : vec3<u32>, @builtin(local_invocation_id) lid
     }
   }
 }
-`;
-    RMSNORM = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Xn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2816,8 +1171,7 @@ fn main(@builtin(workgroup_id) wg : vec3<u32>, @builtin(local_invocation_id) lid
     o = o + WG;
   }
 }
-`;
-    ROPE_IMROPE = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Vn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2887,11 +1241,326 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
   data[i0] = x0 * c - x1 * s;
   data[i1] = x0 * s + x1 * c;
 }
-`;
-    SAMPLING = '// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML\n// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).\n// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).\n// Numerics ported from owner-owned fork: github.com/PrismML-Eng/llama.cpp @ branch "prism"\n//   - temperature / top-k / top-p sampling (card defaults temp 0.7, top-k 20, top-p 0.95)\n//\n// v1 strategy: this kernel computes the argmax fast path (temp ~ 0) and a temperature-\n// scaled max for numerical stability; full top-k/top-p nucleus truncation is done on the\n// host over the reduced candidate set for v1 (simpler + exact), with a GPU bitonic top-k\n// as the follow-up optimisation. Runs over the final logits row (~151K vocab).\n\nstruct SampleP { vocab : u32, temperature : f32, _p0 : u32, _p1 : u32 };\n\n@group(0) @binding(0) var<storage, read>       logits  : array<f32>;   // [vocab]\n@group(0) @binding(1) var<storage, read_write> argmax  : array<u32>;   // [1] best token id\n@group(0) @binding(2) var<storage, read_write> maxval  : array<f32>;   // [1] max logit\n@group(0) @binding(3) var<uniform>             p       : SampleP;\n\nconst WG : u32 = 256u;\nvar<workgroup> best_val : array<f32, WG>;\nvar<workgroup> best_idx : array<u32, WG>;\n\n@compute @workgroup_size(WG)\nfn main(@builtin(local_invocation_id) lid : vec3<u32>) {\n  let tid = lid.x;\n  var bv : f32 = -3.0e38;\n  var bi : u32 = 0u;\n  var i : u32 = tid;\n  loop {\n    if (i >= p.vocab) { break; }\n    let l = logits[i];\n    if (l > bv) { bv = l; bi = i; }\n    i = i + WG;\n  }\n  best_val[tid] = bv;\n  best_idx[tid] = bi;\n  workgroupBarrier();\n\n  var stride : u32 = WG >> 1u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) {\n      if (best_val[tid + stride] > best_val[tid]) {\n        best_val[tid] = best_val[tid + stride];\n        best_idx[tid] = best_idx[tid + stride];\n      }\n    }\n    workgroupBarrier();\n    stride = stride >> 1u;\n  }\n\n  if (tid == 0u) {\n    argmax[0] = best_idx[0];\n    maxval[0] = best_val[0];\n  }\n}\n';
-    SOFTMAX_ATTN = '// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML\n// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).\n// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).\n// Numerics ported from owner-owned fork: github.com/PrismML-Eng/llama.cpp @ branch "prism"\n//   - scaled-dot-product attention with causal mask + GQA (head_count / head_count_kv).\n//\n// Full-attention layers (16 of 64). Online (flash-style) softmax to bound memory over\n// long context. One workgroup per (query token, query head). K/V read from the 4-bit KV\n// cache and dequantized inline (see kvcache.ts / elementwise KV unpack helpers).\n// v1: f32 K/V input path (dequant done host/pre-pass); 4-bit inline unpack is a follow-up.\n\nstruct AttnP {\n  head_dim   : u32,\n  n_kv       : u32,   // number of cached keys (context length so far)\n  q_head     : u32,   // this query head index\n  kv_head    : u32,   // mapped KV head (GQA: q_head / (n_head/n_head_kv))\n  scale      : f32,   // 1/sqrt(head_dim)\n  _p0 : u32, _p1 : u32, _p2 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       q  : array<f32>;   // [head_dim] for this query\n@group(0) @binding(1) var<storage, read>       k  : array<f32>;   // [n_kv * head_dim]\n@group(0) @binding(2) var<storage, read>       v  : array<f32>;   // [n_kv * head_dim]\n@group(0) @binding(3) var<storage, read_write> out : array<f32>;  // [head_dim]\n@group(0) @binding(4) var<uniform>             p   : AttnP;\n\n@compute @workgroup_size(1)\nfn main() {\n  let hd = p.head_dim;\n\n  // online softmax accumulators\n  var m : f32 = -3.0e38;             // running max\n  var l : f32 = 0.0;                 // running denom\n  var acc : array<f32, 256>;         // running weighted V (head_dim <= 256)\n  for (var d : u32 = 0u; d < hd; d = d + 1u) { acc[d] = 0.0; }\n\n  for (var t : u32 = 0u; t < p.n_kv; t = t + 1u) {\n    // score = scale * dot(q, k_t)\n    var s : f32 = 0.0;\n    let kb = t * hd;\n    for (var d : u32 = 0u; d < hd; d = d + 1u) { s = s + q[d] * k[kb + d]; }\n    s = s * p.scale;\n\n    let m_new = max(m, s);\n    let correction = exp(m - m_new);\n    let w = exp(s - m_new);\n    l = l * correction + w;\n    let vb = t * hd;\n    for (var d : u32 = 0u; d < hd; d = d + 1u) {\n      acc[d] = acc[d] * correction + w * v[vb + d];\n    }\n    m = m_new;\n  }\n\n  let inv = select(0.0, 1.0 / l, l > 0.0);\n  for (var d : u32 = 0u; d < hd; d = d + 1u) { out[d] = acc[d] * inv; }\n}\n';
-    SOFTMAX_ATTN_BATCHED = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML\n// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).\n// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).\n//\n// Batched causal GQA softmax attention \u2014 the WHOLE (token \xD7 head) grid in ONE dispatch,\n// reading Q/K/V straight from the resident buffers. Replaces the per-(token,head) host loop\n// that submitted ~n_tokens\xB7n_heads\xB73 GPU commands per layer (the dominant prefill cost).\n// One WORKGROUP per (query token, query head); online (flash-style) softmax over the causal\n// key range. GQA maps each query head to kv_head = q_head / (n_heads / n_heads_kv).\n//\n//   q       : [n_tokens \xB7 n_heads   \xB7 head_dim]   (this batch's queries, post-RoPE)\n//   k_cache : [kv_len   \xB7 n_heads_kv \xB7 head_dim]  (all keys so far, incl. this batch)\n//   v_cache : [kv_len   \xB7 n_heads_kv \xB7 head_dim]\n//   out     : [n_tokens \xB7 n_heads   \xB7 head_dim]\n// Causal: query at absolute position (pos_base + t) attends to cache positions [0, pos_base+t].\n//\n// \u2500\u2500 WHY THIS IS PARALLEL OVER head_dim (measured 2026-07-31) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// This kernel was `@workgroup_size(1)`: ONE GPU thread per (token, head), walking the entire\n// KV cache serially and reading head_dim floats one at a time. For a DECODE step n_tokens is\n// 1, so the whole dispatch was n_heads threads \u2014 32 of a 5090's 21,760 lanes \u2014 each doing\n// kv_len\xB7head_dim\xB72 serial scalar ops, per layer, per token. Cost was therefore LINEAR in\n// context length with a ~1-lane constant, and every read was strided by head_dim (one lane\n// touching a whole cache line and using 4 bytes of it).\n//\n// That is invisible until the prompt grows. Measured on Bonsai-4B, same box, same session:\n//\n//     prompt tokens   forward/token   tok/s\n//     20              111 ms          7.6\n//     169             ~128 ms         7.8\n//     1285            646 ms          1.0        <- the shipped greeter prompt\n//\n// The greeter sends its framing plus getToolDefinitions() \u2014 1290 tokens \u2014 so aitherium.com\n// visitors were getting ~1 tok/s while the microbenchmark (a 20-token prompt) reported 7.6\n// and the engine was blamed. NOTHING regressed in this file; the prompt crossed the point\n// where an O(kv_len) single-lane loop dominates the 545 MB of weight matmuls around it.\n//\n// So: one workgroup per (token, head), WG threads cooperating over head_dim.\n//   - thread `tid` owns dims {tid, tid+WG, \u2026}, keeping q and the output accumulator in\n//     REGISTERS (never workgroup storage \u2014 head_dim\xB7WG floats would blow the 16 KB\n//     guaranteed workgroup-storage limit; only the WG-float reduction scratch lives there).\n//   - at each position the q\xB7k dot product is a tree reduction across the workgroup, so\n//     adjacent threads read ADJACENT k_cache/v_cache elements \u2014 coalesced, one cache line\n//     serving the whole warp instead of one lane.\n// The position loop stays serial and in the same order, which is what keeps the online\n// softmax exact; only the dot product's summation order changes (sequential -> tree), and a\n// tree reduction is no less accurate than the sequential sum it replaces. Correctness is\n// gated by the whole-model GPU-vs-CPU differential in selftest/, which requires argmax\n// agreement \u2014 an attention bug corrupts every downstream logit and shows up there.\n\nstruct BAttnP {\n  n_tokens   : u32,\n  n_heads    : u32,\n  n_heads_kv : u32,\n  head_dim   : u32,\n  pos_base   : u32,   // absolute position of this batch's first token\n  scale      : f32,   // 1/sqrt(head_dim)\n  mode : u32, _p1 : u32,   // mode: 0 = f32 cache (default), 1 = 4-bit packed cache\n};\n\n@group(0) @binding(0) var<storage, read>       q          : array<f32>;\n@group(0) @binding(1) var<storage, read>       k_cache    : array<u32>;\n@group(0) @binding(2) var<storage, read>       v_cache    : array<u32>;\n@group(0) @binding(3) var<storage, read_write> out        : array<f32>;\n@group(0) @binding(4) var<uniform>             p          : BAttnP;\n// 4-bit mode only (mode==1): per-(pos,kv_head) f16 scales, one u32 per row (f16 in low 16\n// bits). In f32 mode these are 4-byte DUMMY buffers, always bound but NEVER indexed \u2014 the\n// uniform `if (p.mode == 1u)` guard is what keeps them unread, because `select()` would\n// evaluate both operands and index them OOB at large positions.\n@group(0) @binding(5) var<storage, read> k_scale_buf : array<u32>;\n@group(0) @binding(6) var<storage, read> v_scale_buf : array<u32>;\n\n// 4-bit dequant read. mode==1: element e (row-aligned, head_dim%8==0 asserted on the host)\n// is a NIBBLE: word e>>3, nibble e&7, value (raw-8)*scale. mode==0: the buffer holds raw\n// f32 bytes and bitcast reinterprets them \u2014 byte-identical to the historical array<f32>\n// binding. The scale is passed in, never re-fetched here.\nfn readK(mode : u32, e : u32, scale : f32) -> f32 {\n  if (mode == 1u) {\n    let w = e >> 3u;\n    let n = e & 7u;\n    let raw = (k_cache[w] >> (n * 4u)) & 0xFu;\n    return (f32(raw) - 8.0) * scale;\n  }\n  return bitcast<f32>(k_cache[e]);\n}\nfn readV(mode : u32, e : u32, scale : f32) -> f32 {\n  if (mode == 1u) {\n    let w = e >> 3u;\n    let n = e & 7u;\n    let raw = (v_cache[w] >> (n * 4u)) & 0xFu;\n    return (f32(raw) - 8.0) * scale;\n  }\n  return bitcast<f32>(v_cache[e]);\n}\n\n// 128 lanes: WebGPU GUARANTEES maxComputeInvocationsPerWorkgroup >= 256 and\n// maxComputeWorkgroupSizeX >= 256, so this is portable, and it equals head_dim on every\n// Bonsai size (1.7B/4B/8B/27B all use 128) \u2014 i.e. exactly one dim per lane, no tail.\nconst WG : u32 = 128u;\n// head_dim <= 256 (asserted by the host), so at most 2 dims per lane.\nconst DPT : u32 = 2u;\n\n// Reduction scratch: WG floats = 512 bytes, far under the 16 KB guaranteed limit.\nvar<workgroup> red : array<f32, 128>;\n\n@compute @workgroup_size(128)\nfn main(@builtin(workgroup_id) wg_ : vec3<u32>,\n        @builtin(local_invocation_id) lid_ : vec3<u32>,\n        @builtin(num_workgroups) nwg_ : vec3<u32>) {\n  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.\n  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension\n  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to\n  // wg_.x. The index is now the WORKGROUP's, not the invocation's: the whole workgroup\n  // cooperates on one (token, head).\n  let idx = wg_.x + wg_.y * nwg_.x;\n  let total = p.n_tokens * p.n_heads;\n  // UNIFORM across the workgroup (it depends only on workgroup_id), so returning here before\n  // the barriers below is legal \u2014 a non-uniform early return would be undefined behaviour.\n  if (idx >= total) { return; }\n\n  let tid = lid_.x;\n  let hd  = p.head_dim;\n  let t   = idx / p.n_heads;         // query token in this batch\n  let h   = idx % p.n_heads;         // query head\n  let kv_head = h / (p.n_heads / p.n_heads_kv);\n\n  let q_base = (t * p.n_heads + h) * hd;\n  let kv_per_pos = p.n_heads_kv * hd;\n  let last = p.pos_base + t;         // inclusive causal limit\n\n  // This lane's slice of q and of the output accumulator, held in registers.\n  var qv  : array<f32, 2>;\n  var acc : array<f32, 2>;\n  for (var i : u32 = 0u; i < DPT; i = i + 1u) {\n    let d = tid + i * WG;\n    qv[i]  = select(0.0, q[q_base + d], d < hd);\n    acc[i] = 0.0;\n  }\n\n  // online softmax accumulators \u2014 identical algebra to the scalar version, and every lane\n  // carries the same m/l because they all consume the same reduced score.\n  var m : f32 = -3.0e38;\n  var l : f32 = 0.0;\n\n  for (var pos : u32 = 0u; pos <= last; pos = pos + 1u) {\n    // Per-(pos,kv_head) f16 scales, fetched ONCE per position. The `if` is a uniform branch\n    // (the same value for every lane in the workgroup), so it cannot diverge a barrier; it\n    // is deliberately NOT a `select()`, which would read the dummy 4-byte scale buffer OOB\n    // in f32 mode once sIdx grows past element 0.\n    var kScale : f32 = 0.0;\n    var vScale : f32 = 0.0;\n    if (p.mode == 1u) {\n      let sIdx = pos * p.n_heads_kv + kv_head;\n      kScale = unpack2x16float(k_scale_buf[sIdx]).x;\n      vScale = unpack2x16float(v_scale_buf[sIdx]).x;\n    }\n    let k_base = pos * kv_per_pos + kv_head * hd;\n    var part : f32 = 0.0;\n    for (var i : u32 = 0u; i < DPT; i = i + 1u) {\n      let d = tid + i * WG;\n      if (d < hd) { part = part + qv[i] * readK(p.mode, k_base + d, kScale); }\n    }\n    red[tid] = part;\n    workgroupBarrier();\n\n    // Tree reduction. The barrier is OUTSIDE the `if`, because a barrier inside non-uniform\n    // control flow is undefined behaviour; the trip count is a constant so every lane runs\n    // the same number of iterations.\n    var stride : u32 = WG / 2u;\n    loop {\n      if (stride == 0u) { break; }\n      if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }\n      workgroupBarrier();\n      stride = stride / 2u;\n    }\n\n    let s = red[0] * p.scale;\n\n    let m_new = max(m, s);\n    let corr  = exp(m - m_new);\n    let w     = exp(s - m_new);\n    l = l * corr + w;\n    let v_base = pos * kv_per_pos + kv_head * hd;\n    for (var i : u32 = 0u; i < DPT; i = i + 1u) {\n      let d = tid + i * WG;\n      if (d < hd) { acc[i] = acc[i] * corr + w * readV(p.mode, v_base + d, vScale); }\n    }\n    m = m_new;\n\n    // Every lane has now READ red[0]; without this the next iteration's `red[tid] = part`\n    // could overwrite it while a slower lane is still reading. Silent wrong scores, not a\n    // crash \u2014 the failure mode this whole file exists to avoid.\n    workgroupBarrier();\n  }\n\n  let inv = select(0.0, 1.0 / l, l > 0.0);\n  for (var i : u32 = 0u; i < DPT; i = i + 1u) {\n    let d = tid + i * WG;\n    if (d < hd) { out[q_base + d] = acc[i] * inv; }\n  }\n}\n";
-    SWIGLU = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+`,Jn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
+// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
+// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).
+// Numerics ported from owner-owned fork: github.com/PrismML-Eng/llama.cpp @ branch "prism"
+//   - temperature / top-k / top-p sampling (card defaults temp 0.7, top-k 20, top-p 0.95)
+//
+// v1 strategy: this kernel computes the argmax fast path (temp ~ 0) and a temperature-
+// scaled max for numerical stability; full top-k/top-p nucleus truncation is done on the
+// host over the reduced candidate set for v1 (simpler + exact), with a GPU bitonic top-k
+// as the follow-up optimisation. Runs over the final logits row (~151K vocab).
+
+struct SampleP { vocab : u32, temperature : f32, _p0 : u32, _p1 : u32 };
+
+@group(0) @binding(0) var<storage, read>       logits  : array<f32>;   // [vocab]
+@group(0) @binding(1) var<storage, read_write> argmax  : array<u32>;   // [1] best token id
+@group(0) @binding(2) var<storage, read_write> maxval  : array<f32>;   // [1] max logit
+@group(0) @binding(3) var<uniform>             p       : SampleP;
+
+const WG : u32 = 256u;
+var<workgroup> best_val : array<f32, WG>;
+var<workgroup> best_idx : array<u32, WG>;
+
+@compute @workgroup_size(WG)
+fn main(@builtin(local_invocation_id) lid : vec3<u32>) {
+  let tid = lid.x;
+  var bv : f32 = -3.0e38;
+  var bi : u32 = 0u;
+  var i : u32 = tid;
+  loop {
+    if (i >= p.vocab) { break; }
+    let l = logits[i];
+    if (l > bv) { bv = l; bi = i; }
+    i = i + WG;
+  }
+  best_val[tid] = bv;
+  best_idx[tid] = bi;
+  workgroupBarrier();
+
+  var stride : u32 = WG >> 1u;
+  loop {
+    if (stride == 0u) { break; }
+    if (tid < stride) {
+      if (best_val[tid + stride] > best_val[tid]) {
+        best_val[tid] = best_val[tid + stride];
+        best_idx[tid] = best_idx[tid + stride];
+      }
+    }
+    workgroupBarrier();
+    stride = stride >> 1u;
+  }
+
+  if (tid == 0u) {
+    argmax[0] = best_idx[0];
+    maxval[0] = best_val[0];
+  }
+}
+`,Zn=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
+// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
+// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).
+// Numerics ported from owner-owned fork: github.com/PrismML-Eng/llama.cpp @ branch "prism"
+//   - scaled-dot-product attention with causal mask + GQA (head_count / head_count_kv).
+//
+// Full-attention layers (16 of 64). Online (flash-style) softmax to bound memory over
+// long context. One workgroup per (query token, query head). K/V read from the 4-bit KV
+// cache and dequantized inline (see kvcache.ts / elementwise KV unpack helpers).
+// v1: f32 K/V input path (dequant done host/pre-pass); 4-bit inline unpack is a follow-up.
+
+struct AttnP {
+  head_dim   : u32,
+  n_kv       : u32,   // number of cached keys (context length so far)
+  q_head     : u32,   // this query head index
+  kv_head    : u32,   // mapped KV head (GQA: q_head / (n_head/n_head_kv))
+  scale      : f32,   // 1/sqrt(head_dim)
+  _p0 : u32, _p1 : u32, _p2 : u32,
+};
+
+@group(0) @binding(0) var<storage, read>       q  : array<f32>;   // [head_dim] for this query
+@group(0) @binding(1) var<storage, read>       k  : array<f32>;   // [n_kv * head_dim]
+@group(0) @binding(2) var<storage, read>       v  : array<f32>;   // [n_kv * head_dim]
+@group(0) @binding(3) var<storage, read_write> out : array<f32>;  // [head_dim]
+@group(0) @binding(4) var<uniform>             p   : AttnP;
+
+@compute @workgroup_size(1)
+fn main() {
+  let hd = p.head_dim;
+
+  // online softmax accumulators
+  var m : f32 = -3.0e38;             // running max
+  var l : f32 = 0.0;                 // running denom
+  var acc : array<f32, 256>;         // running weighted V (head_dim <= 256)
+  for (var d : u32 = 0u; d < hd; d = d + 1u) { acc[d] = 0.0; }
+
+  for (var t : u32 = 0u; t < p.n_kv; t = t + 1u) {
+    // score = scale * dot(q, k_t)
+    var s : f32 = 0.0;
+    let kb = t * hd;
+    for (var d : u32 = 0u; d < hd; d = d + 1u) { s = s + q[d] * k[kb + d]; }
+    s = s * p.scale;
+
+    let m_new = max(m, s);
+    let correction = exp(m - m_new);
+    let w = exp(s - m_new);
+    l = l * correction + w;
+    let vb = t * hd;
+    for (var d : u32 = 0u; d < hd; d = d + 1u) {
+      acc[d] = acc[d] * correction + w * v[vb + d];
+    }
+    m = m_new;
+  }
+
+  let inv = select(0.0, 1.0 / l, l > 0.0);
+  for (var d : u32 = 0u; d < hd; d = d + 1u) { out[d] = acc[d] * inv; }
+}
+`,er=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
+// llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
+// NO third-party Space code (HF Spaces bonsai-* explicitly excluded).
+//
+// Batched causal GQA softmax attention \u2014 the WHOLE (token \xD7 head) grid in ONE dispatch,
+// reading Q/K/V straight from the resident buffers. Replaces the per-(token,head) host loop
+// that submitted ~n_tokens\xB7n_heads\xB73 GPU commands per layer (the dominant prefill cost).
+// One WORKGROUP per (query token, query head); online (flash-style) softmax over the causal
+// key range. GQA maps each query head to kv_head = q_head / (n_heads / n_heads_kv).
+//
+//   q       : [n_tokens \xB7 n_heads   \xB7 head_dim]   (this batch's queries, post-RoPE)
+//   k_cache : [kv_len   \xB7 n_heads_kv \xB7 head_dim]  (all keys so far, incl. this batch)
+//   v_cache : [kv_len   \xB7 n_heads_kv \xB7 head_dim]
+//   out     : [n_tokens \xB7 n_heads   \xB7 head_dim]
+// Causal: query at absolute position (pos_base + t) attends to cache positions [0, pos_base+t].
+//
+// \u2500\u2500 WHY THIS IS PARALLEL OVER head_dim (measured 2026-07-31) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// This kernel was \`@workgroup_size(1)\`: ONE GPU thread per (token, head), walking the entire
+// KV cache serially and reading head_dim floats one at a time. For a DECODE step n_tokens is
+// 1, so the whole dispatch was n_heads threads \u2014 32 of a 5090's 21,760 lanes \u2014 each doing
+// kv_len\xB7head_dim\xB72 serial scalar ops, per layer, per token. Cost was therefore LINEAR in
+// context length with a ~1-lane constant, and every read was strided by head_dim (one lane
+// touching a whole cache line and using 4 bytes of it).
+//
+// That is invisible until the prompt grows. Measured on Bonsai-4B, same box, same session:
+//
+//     prompt tokens   forward/token   tok/s
+//     20              111 ms          7.6
+//     169             ~128 ms         7.8
+//     1285            646 ms          1.0        <- the shipped greeter prompt
+//
+// The greeter sends its framing plus getToolDefinitions() \u2014 1290 tokens \u2014 so aitherium.com
+// visitors were getting ~1 tok/s while the microbenchmark (a 20-token prompt) reported 7.6
+// and the engine was blamed. NOTHING regressed in this file; the prompt crossed the point
+// where an O(kv_len) single-lane loop dominates the 545 MB of weight matmuls around it.
+//
+// So: one workgroup per (token, head), WG threads cooperating over head_dim.
+//   - thread \`tid\` owns dims {tid, tid+WG, \u2026}, keeping q and the output accumulator in
+//     REGISTERS (never workgroup storage \u2014 head_dim\xB7WG floats would blow the 16 KB
+//     guaranteed workgroup-storage limit; only the WG-float reduction scratch lives there).
+//   - at each position the q\xB7k dot product is a tree reduction across the workgroup, so
+//     adjacent threads read ADJACENT k_cache/v_cache elements \u2014 coalesced, one cache line
+//     serving the whole warp instead of one lane.
+// The position loop stays serial and in the same order, which is what keeps the online
+// softmax exact; only the dot product's summation order changes (sequential -> tree), and a
+// tree reduction is no less accurate than the sequential sum it replaces. Correctness is
+// gated by the whole-model GPU-vs-CPU differential in selftest/, which requires argmax
+// agreement \u2014 an attention bug corrupts every downstream logit and shows up there.
+
+struct BAttnP {
+  n_tokens   : u32,
+  n_heads    : u32,
+  n_heads_kv : u32,
+  head_dim   : u32,
+  pos_base   : u32,   // absolute position of this batch's first token
+  scale      : f32,   // 1/sqrt(head_dim)
+  mode : u32, _p1 : u32,   // mode: 0 = f32 cache (default), 1 = 4-bit packed cache
+};
+
+@group(0) @binding(0) var<storage, read>       q          : array<f32>;
+@group(0) @binding(1) var<storage, read>       k_cache    : array<u32>;
+@group(0) @binding(2) var<storage, read>       v_cache    : array<u32>;
+@group(0) @binding(3) var<storage, read_write> out        : array<f32>;
+@group(0) @binding(4) var<uniform>             p          : BAttnP;
+// 4-bit mode only (mode==1): per-(pos,kv_head) f16 scales, one u32 per row (f16 in low 16
+// bits). In f32 mode these are 4-byte DUMMY buffers, always bound but NEVER indexed \u2014 the
+// uniform \`if (p.mode == 1u)\` guard is what keeps them unread, because \`select()\` would
+// evaluate both operands and index them OOB at large positions.
+@group(0) @binding(5) var<storage, read> k_scale_buf : array<u32>;
+@group(0) @binding(6) var<storage, read> v_scale_buf : array<u32>;
+
+// 4-bit dequant read. mode==1: element e (row-aligned, head_dim%8==0 asserted on the host)
+// is a NIBBLE: word e>>3, nibble e&7, value (raw-8)*scale. mode==0: the buffer holds raw
+// f32 bytes and bitcast reinterprets them \u2014 byte-identical to the historical array<f32>
+// binding. The scale is passed in, never re-fetched here.
+fn readK(mode : u32, e : u32, scale : f32) -> f32 {
+  if (mode == 1u) {
+    let w = e >> 3u;
+    let n = e & 7u;
+    let raw = (k_cache[w] >> (n * 4u)) & 0xFu;
+    return (f32(raw) - 8.0) * scale;
+  }
+  return bitcast<f32>(k_cache[e]);
+}
+fn readV(mode : u32, e : u32, scale : f32) -> f32 {
+  if (mode == 1u) {
+    let w = e >> 3u;
+    let n = e & 7u;
+    let raw = (v_cache[w] >> (n * 4u)) & 0xFu;
+    return (f32(raw) - 8.0) * scale;
+  }
+  return bitcast<f32>(v_cache[e]);
+}
+
+// 128 lanes: WebGPU GUARANTEES maxComputeInvocationsPerWorkgroup >= 256 and
+// maxComputeWorkgroupSizeX >= 256, so this is portable, and it equals head_dim on every
+// Bonsai size (1.7B/4B/8B/27B all use 128) \u2014 i.e. exactly one dim per lane, no tail.
+const WG : u32 = 128u;
+// head_dim <= 256 (asserted by the host), so at most 2 dims per lane.
+const DPT : u32 = 2u;
+
+// Reduction scratch: WG floats = 512 bytes, far under the 16 KB guaranteed limit.
+var<workgroup> red : array<f32, 128>;
+
+@compute @workgroup_size(128)
+fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
+        @builtin(local_invocation_id) lid_ : vec3<u32>,
+        @builtin(num_workgroups) nwg_ : vec3<u32>) {
+  // FLAT INDEX ACROSS A POSSIBLY-2D WORKGROUP GRID.
+  // dispatch1D() folds the workgroup count into y once it passes WebGPU's 65535-per-dimension
+  // limit. When it does not \u2014 the common case \u2014 num_workgroups.y is 1 and this reduces to
+  // wg_.x. The index is now the WORKGROUP's, not the invocation's: the whole workgroup
+  // cooperates on one (token, head).
+  let idx = wg_.x + wg_.y * nwg_.x;
+  let total = p.n_tokens * p.n_heads;
+  // UNIFORM across the workgroup (it depends only on workgroup_id), so returning here before
+  // the barriers below is legal \u2014 a non-uniform early return would be undefined behaviour.
+  if (idx >= total) { return; }
+
+  let tid = lid_.x;
+  let hd  = p.head_dim;
+  let t   = idx / p.n_heads;         // query token in this batch
+  let h   = idx % p.n_heads;         // query head
+  let kv_head = h / (p.n_heads / p.n_heads_kv);
+
+  let q_base = (t * p.n_heads + h) * hd;
+  let kv_per_pos = p.n_heads_kv * hd;
+  let last = p.pos_base + t;         // inclusive causal limit
+
+  // This lane's slice of q and of the output accumulator, held in registers.
+  var qv  : array<f32, 2>;
+  var acc : array<f32, 2>;
+  for (var i : u32 = 0u; i < DPT; i = i + 1u) {
+    let d = tid + i * WG;
+    qv[i]  = select(0.0, q[q_base + d], d < hd);
+    acc[i] = 0.0;
+  }
+
+  // online softmax accumulators \u2014 identical algebra to the scalar version, and every lane
+  // carries the same m/l because they all consume the same reduced score.
+  var m : f32 = -3.0e38;
+  var l : f32 = 0.0;
+
+  for (var pos : u32 = 0u; pos <= last; pos = pos + 1u) {
+    // Per-(pos,kv_head) f16 scales, fetched ONCE per position. The \`if\` is a uniform branch
+    // (the same value for every lane in the workgroup), so it cannot diverge a barrier; it
+    // is deliberately NOT a \`select()\`, which would read the dummy 4-byte scale buffer OOB
+    // in f32 mode once sIdx grows past element 0.
+    var kScale : f32 = 0.0;
+    var vScale : f32 = 0.0;
+    if (p.mode == 1u) {
+      let sIdx = pos * p.n_heads_kv + kv_head;
+      kScale = unpack2x16float(k_scale_buf[sIdx]).x;
+      vScale = unpack2x16float(v_scale_buf[sIdx]).x;
+    }
+    let k_base = pos * kv_per_pos + kv_head * hd;
+    var part : f32 = 0.0;
+    for (var i : u32 = 0u; i < DPT; i = i + 1u) {
+      let d = tid + i * WG;
+      if (d < hd) { part = part + qv[i] * readK(p.mode, k_base + d, kScale); }
+    }
+    red[tid] = part;
+    workgroupBarrier();
+
+    // Tree reduction. The barrier is OUTSIDE the \`if\`, because a barrier inside non-uniform
+    // control flow is undefined behaviour; the trip count is a constant so every lane runs
+    // the same number of iterations.
+    var stride : u32 = WG / 2u;
+    loop {
+      if (stride == 0u) { break; }
+      if (tid < stride) { red[tid] = red[tid] + red[tid + stride]; }
+      workgroupBarrier();
+      stride = stride / 2u;
+    }
+
+    let s = red[0] * p.scale;
+
+    let m_new = max(m, s);
+    let corr  = exp(m - m_new);
+    let w     = exp(s - m_new);
+    l = l * corr + w;
+    let v_base = pos * kv_per_pos + kv_head * hd;
+    for (var i : u32 = 0u; i < DPT; i = i + 1u) {
+      let d = tid + i * WG;
+      if (d < hd) { acc[i] = acc[i] * corr + w * readV(p.mode, v_base + d, vScale); }
+    }
+    m = m_new;
+
+    // Every lane has now READ red[0]; without this the next iteration's \`red[tid] = part\`
+    // could overwrite it while a slower lane is still reading. Silent wrong scores, not a
+    // crash \u2014 the failure mode this whole file exists to avoid.
+    workgroupBarrier();
+  }
+
+  let inv = select(0.0, 1.0 / l, l > 0.0);
+  for (var i : u32 = 0u; i < DPT; i = i + 1u) {
+    let d = tid + i * WG;
+    if (d < hd) { out[q_base + d] = acc[i] * inv; }
+  }
+}
+`,tr=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
 // Original Aitherium WebGPU implementation \u2014 WGSL kernels ported from the PrismML
 // llama.cpp fork (github.com/PrismML-Eng/llama.cpp @ prism, Aitherium/PrismML-owned).
@@ -2921,1864 +1590,240 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
   if (i >= n) { return; }
   out[i] = silu(gate[i]) * up[i];
 }
-`;
-    VAE_OPS = "// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary\n// \xA9 2026 Aitherium, LLC. Original work.\n// Original Aitherium WebGPU implementation.\n//\n// THE THREE OPS THE VAE DECODER NEEDS AND THE TRANSFORMER DOES NOT.\n//\n// In-browser image generation was written off as needing a foreign kernel family. It does\n// not. `:8798` serves FLUX.2 Klein 4B, and the giveaway is in its own tensor names \u2014\n// `transformer_blocks.0.attn.to_q` \u2014 MMDiT is a diffusion TRANSFORMER: attention + MLP over\n// latent patches, which the existing kernels already do. Its text encoder is Qwen3-4B, the\n// same architecture family as the Bonsai text models that already run in a visitor's browser.\n//\n// What genuinely has no equivalent is the VAE DECODER, and only three ops of it. From the\n// shipped model's own vae/config.json (AutoencoderKLFlux2):\n//\n//     block_out_channels : [128, 256, 512, 512]\n//     up_block_types     : 4 x UpDecoderBlock2D\n//     layers_per_block   : 2\n//     latent_channels    : 32\n//     norm_num_groups    : 32\n//     act_fn             : silu\n//\n// so the decode graph is: conv_in -> mid(resnet + attn) -> 4 x (2 resnets + 2x upsample)\n// -> GroupNorm -> SiLU -> conv_out(3ch). Attention and SiLU already exist. These are the rest.\n//\n// LAYOUT: NCHW, f32, batch 1 \u2014 one image at a time is what a browser does, and NCHW keeps a\n// channel's plane contiguous, which is what makes GroupNorm's reduction a simple range.\n//\n// PERFORMANCE NOTE, learned the expensive way on softmax_attn_batched: a kernel written as\n// one-thread-per-output looks fine and silently becomes the bottleneck when the tensor grows.\n// The last up block runs at full output resolution, so at 1024x1024x128 that is 134M outputs.\n// conv2d here is one thread per OUTPUT ELEMENT with the reduction inside it \u2014 correct, and\n// deliberately the simple version first, because the transformer kernels earned their\n// optimisations only after a CPU differential proved them right. Optimise after it is correct\n// and after a measurement says which part is slow, not before.\n\nstruct ConvP {\n  in_c   : u32,\n  out_c  : u32,\n  h      : u32,   // input height\n  w      : u32,   // input width\n  k      : u32,   // square kernel size (1 or 3 here)\n  pad    : u32,\n  stride : u32,\n  _p0    : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       x       : array<f32>;  // [in_c*h*w]\n@group(0) @binding(1) var<storage, read>       weight  : array<f32>;  // [out_c*in_c*k*k]\n@group(0) @binding(2) var<storage, read>       bias    : array<f32>;  // [out_c]\n@group(0) @binding(3) var<storage, read_write> y       : array<f32>;  // [out_c*oh*ow]\n@group(0) @binding(4) var<uniform>             p       : ConvP;\n\nfn out_h() -> u32 { return (p.h + 2u * p.pad - p.k) / p.stride + 1u; }\nfn out_w() -> u32 { return (p.w + 2u * p.pad - p.k) / p.stride + 1u; }\n\n/**\n * 2-D convolution, NCHW, one thread per output element.\n *\n * Zero padding is done by SKIPPING out-of-range taps rather than by materialising a padded\n * input. Materialising would allocate another full tensor per layer \u2014 at decoder resolutions\n * that is hundreds of megabytes of pure copy, on a device that is also holding a language\n * model.\n */\n@compute @workgroup_size(64)\nfn conv2d_main(@builtin(global_invocation_id) gid : vec3<u32>,\n               @builtin(num_workgroups) nwg : vec3<u32>) {\n  let oh = out_h();\n  let ow = out_w();\n  let total = p.out_c * oh * ow;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n\n  let ox = idx % ow;\n  let oy = (idx / ow) % oh;\n  let oc = idx / (ow * oh);\n\n  var acc : f32 = bias[oc];\n  for (var ic : u32 = 0u; ic < p.in_c; ic = ic + 1u) {\n    let x_plane = ic * p.h * p.w;\n    let w_base = ((oc * p.in_c) + ic) * p.k * p.k;\n    for (var ky : u32 = 0u; ky < p.k; ky = ky + 1u) {\n      // Signed arithmetic: with pad=1 the first row's taps land at -1, and doing this in\n      // u32 wraps to ~4 billion and reads far out of bounds. WebGPU's robust access would\n      // return 0 there, which LOOKS like correct zero-padding and is not \u2014 it silently\n      // drops the real taps too on the opposite edge.\n      let iy = i32(oy * p.stride) + i32(ky) - i32(p.pad);\n      if (iy < 0 || iy >= i32(p.h)) { continue; }\n      for (var kx : u32 = 0u; kx < p.k; kx = kx + 1u) {\n        let ix = i32(ox * p.stride) + i32(kx) - i32(p.pad);\n        if (ix < 0 || ix >= i32(p.w)) { continue; }\n        acc = acc + x[x_plane + u32(iy) * p.w + u32(ix)] * weight[w_base + ky * p.k + kx];\n      }\n    }\n  }\n  y[idx] = acc;\n}\n\nstruct GroupNormP {\n  c       : u32,\n  h       : u32,\n  w       : u32,\n  groups  : u32,\n  eps     : f32,\n  _p0 : u32, _p1 : u32, _p2 : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       gx      : array<f32>;\n@group(0) @binding(1) var<storage, read>       gamma   : array<f32>;  // [c]\n@group(0) @binding(2) var<storage, read>       beta    : array<f32>;  // [c]\n@group(0) @binding(3) var<storage, read_write> gy      : array<f32>;\n@group(0) @binding(4) var<uniform>             gp      : GroupNormP;\n\n/**\n * GroupNorm \u2014 one WORKGROUP per group, cooperating over that group's whole slab.\n *\n * NOT one thread per group. A group at decoder sizes is (c/groups) x h x w elements \u2014 with\n * 128 channels, 32 groups and a 512x512 plane that is over a million values, and a single\n * thread walking it is the same one-lane mistake that made attention 8x slower than it had\n * to be. The mean and variance are a parallel reduction; the normalise pass is grid-strided.\n *\n * Two passes over the slab (mean, then variance) rather than the sum/sum-of-squares trick:\n * at f32 with a million-element reduction the one-pass form loses precision exactly where\n * the variance is small, which is where a VAE's activations live.\n */\nvar<workgroup> red_sum : array<f32, 256>;\n\n@compute @workgroup_size(256)\nfn groupnorm_main(@builtin(workgroup_id) wg : vec3<u32>,\n                  @builtin(local_invocation_id) lid : vec3<u32>) {\n  let g = wg.x;\n  if (g >= gp.groups) { return; }        // uniform across the workgroup \u2014 safe with barriers\n\n  let cpg = gp.c / gp.groups;            // channels per group\n  let plane = gp.h * gp.w;\n  let slab = cpg * plane;                // elements this group owns\n  let base = g * slab;\n  let tid = lid.x;\n\n  // ---- mean ----\n  var s : f32 = 0.0;\n  var i : u32 = tid;\n  loop {\n    if (i >= slab) { break; }\n    s = s + gx[base + i];\n    i = i + 256u;\n  }\n  red_sum[tid] = s;\n  workgroupBarrier();\n  var stride : u32 = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }\n    workgroupBarrier();\n    stride = stride / 2u;\n  }\n  let mean = red_sum[0] / f32(slab);\n  workgroupBarrier();\n\n  // ---- variance ----\n  var v : f32 = 0.0;\n  i = tid;\n  loop {\n    if (i >= slab) { break; }\n    let d = gx[base + i] - mean;\n    v = v + d * d;\n    i = i + 256u;\n  }\n  red_sum[tid] = v;\n  workgroupBarrier();\n  stride = 128u;\n  loop {\n    if (stride == 0u) { break; }\n    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }\n    workgroupBarrier();\n    stride = stride / 2u;\n  }\n  let inv_std = 1.0 / sqrt(red_sum[0] / f32(slab) + gp.eps);\n  workgroupBarrier();\n\n  // ---- normalise + per-CHANNEL affine ----\n  // gamma/beta are indexed by absolute channel, not by group: a group spans cpg channels and\n  // each has its own scale. Using the group index here is an easy and completely silent\n  // error \u2014 the image comes out plausible and wrong.\n  i = tid;\n  loop {\n    if (i >= slab) { break; }\n    let ch = g * cpg + (i / plane);\n    gy[base + i] = (gx[base + i] - mean) * inv_std * gamma[ch] + beta[ch];\n    i = i + 256u;\n  }\n}\n\nstruct UpP {\n  c : u32,\n  h : u32,\n  w : u32,\n  scale : u32,\n};\n\n@group(0) @binding(0) var<storage, read>       ux : array<f32>;\n@group(0) @binding(1) var<storage, read_write> uy : array<f32>;\n@group(0) @binding(2) var<uniform>             up : UpP;\n\n/**\n * Nearest-neighbour upsample by an integer factor \u2014 what UpDecoderBlock2D does before its\n * convolution (diffusers' Upsample2D default is nearest, and the conv that follows is what\n * turns the blockiness into detail). Bilinear here would be a different model.\n */\n@compute @workgroup_size(64)\nfn upsample_nearest_main(@builtin(global_invocation_id) gid : vec3<u32>,\n                         @builtin(num_workgroups) nwg : vec3<u32>) {\n  let oh = up.h * up.scale;\n  let ow = up.w * up.scale;\n  let total = up.c * oh * ow;\n  let idx = gid.x + gid.y * nwg.x * 64u;\n  if (idx >= total) { return; }\n\n  let ox = idx % ow;\n  let oy = (idx / ow) % oh;\n  let ch = idx / (ow * oh);\n\n  let sx = ox / up.scale;\n  let sy = oy / up.scale;\n  uy[idx] = ux[ch * up.h * up.w + sy * up.w + sx];\n}\n";
-    WGSL_SOURCES = {
-      "causal_conv1d": CAUSAL_CONV1D,
-      "deltanet": DELTANET,
-      "deltanet_gate": DELTANET_GATE,
-      "deltanet_seq": DELTANET_SEQ,
-      "elementwise": ELEMENTWISE,
-      "elementwise_inplace": ELEMENTWISE_INPLACE,
-      "kv_quant_4bit": KV_QUANT_4BIT,
-      "logit_topk": LOGIT_TOPK,
-      "q1_0_dequant": Q1_0_DEQUANT,
-      "q1_0_q8_0_matmul": Q1_0_Q8_0_MATMUL,
-      "q2_0_dequant": Q2_0_DEQUANT,
-      "q2_0_q8_0_matmul": Q2_0_Q8_0_MATMUL,
-      "quantize_q8_0": QUANTIZE_Q8_0,
-      "rmsnorm": RMSNORM,
-      "rope_imrope": ROPE_IMROPE,
-      "sampling": SAMPLING,
-      "softmax_attn": SOFTMAX_ATTN,
-      "softmax_attn_batched": SOFTMAX_ATTN_BATCHED,
-      "swiglu": SWIGLU,
-      "vae_ops": VAE_OPS
-    };
-  }
-});var kv_f32_exports = {};
-__export(kv_f32_exports, {
-  F32KvCache: () => F32KvCache
-});
-var F32KvCache;
-var init_kv_f32 = __esm({
-  "m23"() {
-    "use strict";
-    init_gpu_min();
-    init_dispatch();
-    F32KvCache = class {
-      // headCountKv * headDim
-      constructor(device, cfg) {
-        this.device = device;
-        this.cfg = cfg;
-        this.layers = /* @__PURE__ */ new Map();
-        this.capacity = cfg.capacity;
-        this.perPos = cfg.headCountKv * cfg.headDim;
-        const totalElems = this.capacity * this.perPos;
-        const bytes = totalElems * 4;
-        for (const l of cfg.fullAttnLayers) {
-          this.layers.set(l, {
-            k: this.alloc(bytes, `kv_f32.k.${l}`),
-            v: this.alloc(bytes, `kv_f32.v.${l}`),
-            length: 0
-          });
-        }
-      }
-      alloc(bytes, label) {
-        return this.device.createBuffer({
-          size: Math.max(4, bytes),
-          usage: BufferUsage.STORAGE | BufferUsage.COPY_DST | BufferUsage.COPY_SRC,
-          label
-        });
-      }
-      layer(index) {
-        const l = this.layers.get(index);
-        if (!l) throw new Error(`bonsai-kv_f32: layer ${index} has no F32 KV cache (not a full-attn layer)`);
-        return l;
-      }
-      /**
-       * Append nTok positions worth of f32 K/V data to a layer.
-       * kF32 and vF32 must be [nTok * headCountKv * headDim] f32 buffers.
-       * This advances the layer's internal length; does NOT advance the global KvCache.
-       * kSrcOffset and vSrcOffset allow extracting a slice from the source buffers (in bytes).
-       */
-      append(layer, kF32, vF32, nTok, kSrcOffset = 0, vSrcOffset = 0) {
-        const l = this.layers.get(layer);
-        if (!l) throw new Error(`bonsai-kv_f32: layer ${layer} has no F32 KV cache`);
-        if (l.length + nTok > this.capacity) {
-          throw new Error(
-            `bonsai-kv_f32: layer ${layer} capacity ${this.capacity} exceeded (length=${l.length}, append=${nTok})`
-          );
-        }
-        const offsetElems = l.length * this.perPos;
-        const offsetBytes = offsetElems * 4;
-        const nElems = nTok * this.perPos;
-        const nBytes = nElems * 4;
-        const tgt = beginCopies(this.device);
-        tgt.enc.copyBufferToBuffer(kF32, kSrcOffset, l.k, offsetBytes, nBytes);
-        tgt.enc.copyBufferToBuffer(vF32, vSrcOffset, l.v, offsetBytes, nBytes);
-        finishCopies(this.device, tgt);
-        l.length += nTok;
-      }
-      /**
-       * Global position advance. forward.ts (prefill/decodeStep) calls this once after the
-       * block loop. For the F32 cache each full-attn layer's length is already advanced by
-       * append() (see its docstring), so this is a no-op — present for interface parity with
-       * the 4-bit KvCache so the forward-pass orchestration runs end-to-end.
-       */
-      advance(_nTok) {
-      }
-      /**
-       * The filled length shared by EVERY full-attention layer.
-       *
-       * Layers advance independently (append() bumps each one as its block runs), so
-       * they are only ever equal because every layer sees every token. If they ever
-       * disagree, some layer silently skipped or double-counted a position and its
-       * attention is reading a different history from its neighbours' — fluent, wrong
-       * output with nothing in the logs. Cross-turn reuse depends on there being ONE
-       * true length, so this asserts that rather than trusting layer 0.
-       */
-      filledLength() {
-        let seen = null;
-        for (const [idx, l] of this.layers) {
-          if (seen === null) seen = l.length;
-          else if (l.length !== seen) {
-            throw new Error(
-              `bonsai-kv_f32: layers disagree on filled length (layer ${idx}=${l.length}, expected ${seen}) \u2014 the KV cache is inconsistent`
-            );
-          }
-        }
-        return seen ?? 0;
-      }
-      /** Get the current filled length for a layer. */
-      currentLength(layer) {
-        const l = this.layers.get(layer);
-        if (!l) throw new Error(`bonsai-kv_f32: layer ${layer} has no F32 KV cache`);
-        return l.length;
-      }
-      /** Reset all layer lengths to 0 at the start of a generation. */
-      reset() {
-        for (const l of this.layers.values()) {
-          l.length = 0;
-        }
-      }
-      /**
-       * Keep the first `n` positions and drop the rest — cross-turn prefix reuse.
-       *
-       * Exact for attention, because position t's K/V depend only on token t: the
-       * surviving entries are bit-identical to what a fresh prefill of that prefix
-       * would write. Nothing is zeroed, matching reset(): the buffers past `n` are
-       * simply unreachable, since attention reads only [0, length).
-       *
-       * 🪤 This is NOT a general "rewind the model" operation. Layers with a
-       * RECURRENT state (DeltaNet) fold every token into one running value that has
-       * no inverse, and truncating their history is impossible — the caller decides
-       * via `planReuse(canTruncate)`, which refuses for any model carrying such
-       * layers. Calling this on a hybrid model would leave attention rewound and the
-       * recurrent state still holding the future: fluent, wrong output, no error.
-       */
-      truncate(n) {
-        if (n < 0) throw new Error(`bonsai-kv_f32: truncate(${n}) \u2014 negative length`);
-        for (const l of this.layers.values()) {
-          if (n > l.length) {
-            throw new Error(
-              `bonsai-kv_f32: truncate(${n}) exceeds filled length ${l.length} \u2014 cannot extend a cache by declaration`
-            );
-          }
-          l.length = n;
-        }
-      }
-    };
-  }
-});var ssm_state_exports = {};
-__export(ssm_state_exports, {
-  SsmState: () => SsmState
-});
-var SsmState;
-var init_ssm_state = __esm({
-  "m24"() {
-    "use strict";
-    init_gpu_min();
-    SsmState = class {
-      constructor(device, cfg) {
-        this.device = device;
-        this.cfg = cfg;
-        /** Bumped by reset(). Consumers that cache per-generation scratch OUTSIDE this
-         *  class (e.g. block_deltanet's causal-conv history) compare against this to
-         *  know their cache is stale. Without it, reset() silently missed that history
-         *  and every generation after the first began with the PREVIOUS conversation's
-         *  last conv_kernel-1 rows still in place, in all 48 DeltaNet layers. */
-        this.gen = 0;
-        this.states = /* @__PURE__ */ new Map();
-        this.convStates = /* @__PURE__ */ new Map();
-        const stateElems = cfg.heads * cfg.dK * cfg.dV;
-        const bytes = stateElems * 4;
-        for (const l of cfg.linearAttnLayers) {
-          this.states.set(l, this.alloc(bytes, `ssm.S.${l}`));
-        }
-        if (cfg.dConv !== void 0 && cfg.ssmInnerSize !== void 0) {
-          const convHistoryElems = (cfg.dConv - 1) * (cfg.convDim ?? cfg.ssmInnerSize);
-          const convBytes = convHistoryElems * 4;
-          for (const l of cfg.linearAttnLayers) {
-            this.convStates.set(l, this.alloc(convBytes, `ssm.conv_state.${l}`));
-          }
-        }
-      }
-      alloc(bytes, label) {
-        return this.device.createBuffer({
-          size: Math.max(4, bytes),
-          usage: BufferUsage.STORAGE | BufferUsage.COPY_DST | BufferUsage.COPY_SRC,
-          label
-        });
-      }
-      state(layerIndex) {
-        const s = this.states.get(layerIndex);
-        if (!s) throw new Error(`bonsai-ssm: layer ${layerIndex} has no DeltaNet state`);
-        return s;
-      }
-      /** Convolution sliding-window state (for streaming decode). */
-      convState(layerIndex) {
-        return this.convStates.get(layerIndex);
-      }
-      /** Zero all state buffers at the start of a generation (prefill re-fills them). */
-      /** Monotonic generation id — changes on every reset(). */
-      get generation() {
-        return this.gen;
-      }
-      reset() {
-        this.gen++;
-        const zero = new Float32Array(this.cfg.heads * this.cfg.dK * this.cfg.dV);
-        for (const buf of this.states.values()) this.device.queue.writeBuffer(buf, 0, zero);
-        if (this.cfg.dConv !== void 0 && this.cfg.ssmInnerSize !== void 0) {
-          const convWidth = this.cfg.convDim ?? this.cfg.ssmInnerSize;
-          const convZero = new Float32Array((this.cfg.dConv - 1) * convWidth);
-          for (const buf of this.convStates.values()) this.device.queue.writeBuffer(buf, 0, convZero);
-        }
-      }
-    };
-  }
-});var topk_threshold_exports = {};
-__export(topk_threshold_exports, {
-  LOGIT_HIST_BINS: () => LOGIT_HIST_BINS,
-  LOGIT_RANGE_HI: () => LOGIT_RANGE_HI,
-  LOGIT_RANGE_LO: () => LOGIT_RANGE_LO,
-  TOPK_GATHER_CAPACITY: () => TOPK_GATHER_CAPACITY,
-  chooseThreshold: () => chooseThreshold
-});
-function chooseThreshold(hist, lo, hi, k, capacity) {
-  const nBins = hist.length;
-  const span = Math.max(hi - lo, 1e-6);
-  let acc = 0;
-  for (let b = 0; b < nBins; b++) {
-    acc += hist[b];
-    if (acc >= k) {
-      const threshold = hi - (b + 1) / nBins * span;
-      return {
-        threshold,
-        expected: acc,
-        overflow: acc > capacity,
-        reason: acc > capacity ? `bin ${b} of ${nBins} holds ${acc} candidates, over the ${capacity} the gather can hold` : `bin ${b} of ${nBins} reaches ${acc} candidates for k=${k}`
-      };
-    }
-  }
-  return {
-    threshold: lo,
-    expected: acc,
-    overflow: true,
-    reason: `histogram holds only ${acc} counts, fewer than k=${k} \u2014 refusing to threshold`
-  };
-}
-var LOGIT_RANGE_LO, LOGIT_RANGE_HI, LOGIT_HIST_BINS, TOPK_GATHER_CAPACITY;
-var init_topk_threshold = __esm({
-  "m25"() {
-    "use strict";
-    LOGIT_RANGE_LO = -50;
-    LOGIT_RANGE_HI = 50;
-    LOGIT_HIST_BINS = 1024;
-    TOPK_GATHER_CAPACITY = 2048;
-  }
-});var ops_exports = {};
-__export(ops_exports, {
-  Q8_BLOCK: () => Q8_BLOCK,
-  Q8_BYTES_PER_BLOCK: () => Q8_BYTES_PER_BLOCK,
-  causalConv1d: () => causalConv1d,
-  dbgStats: () => dbgStats,
-  deltanetGate: () => deltanetGate,
-  deltanetSeq: () => deltanetSeq,
-  deltanetStep: () => deltanetStep,
-  elementwise: () => elementwise,
-  elementwiseInplace: () => elementwiseInplace,
-  f32Buffer: () => f32Buffer,
-  gpuTopK: () => gpuTopK,
-  mulSigmoidInplace: () => mulSigmoidInplace,
-  projectQ1: () => projectQ1,
-  projectQuantized: () => projectQuantized,
-  q1q8Matmul: () => q1q8Matmul,
-  q2q8Matmul: () => q2q8Matmul,
-  quantizeQ8: () => quantizeQ8,
-  readbackF32: () => readbackF32,
-  residualAdd: () => residualAdd,
-  rmsnorm: () => rmsnorm,
-  ropeImrope: () => ropeImrope,
-  sampleArgmax: () => sampleArgmax,
-  sampleTiming: () => sampleTiming,
-  sampleToken: () => sampleToken,
-  scratchBuffer: () => scratchBuffer,
-  siluInplace: () => siluInplace,
-  softmaxAttnBatched: () => softmaxAttnBatched,
-  softmaxAttnHead: () => softmaxAttnHead,
-  swigluMul: () => swigluMul
-});
-function f32Buffer(device, count, label, opts) {
-  return createStorage(device, Math.max(F32, count * F32), label, opts);
-}
-function scratchBuffer(ctx, count, label, opts) {
-  const b = f32Buffer(ctx.device, count, label, opts);
-  deferDestroy(ctx.device, b);
-  return b;
-}
-function uniform(device, fields) {
-  const bytes = packUniform(fields);
-  const buf = createUniform(device, bytes.byteLength);
-  device.queue.writeBuffer(buf, 0, bytes);
-  deferDestroy(device, buf);
-  return buf;
-}
-function rmsnorm(ctx, x, weight, y, nRows, n, eps) {
-  const p = uniform(ctx.device, [{ u32: n }, { f32: eps }, { u32: 0 }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("rmsnorm");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [x, weight, y, p]), nRows, 1);
-}
-function quantizeQ8(ctx, activations, count) {
-  const nBlocks = Math.ceil(count / Q8_BLOCK);
-  const d = createStorage(ctx.device, nBlocks * 4, "act_d");
-  const qs = createStorage(ctx.device, nBlocks * 8 * 4, "act_qs");
-  const pipe = ctx.pipelines.get("quantize_q8_0");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [activations, d, qs]), nBlocks, 1);
-  return { d, qs, nBlocks };
-}
-function q1q8Matmul(ctx, weightsQ1, act, out, nRows, K, nCols) {
-  const colTiles = Math.ceil(nCols / 64);
-  const dims = uniform(ctx.device, [{ u32: K }, { u32: nCols }, { u32: nRows }, { u32: colTiles }]);
-  const pipe = ctx.pipelines.get("q1_0_q8_0_matmul");
-  const bg = bindGroup(ctx.device, pipe, [weightsQ1, act.d, act.qs, out, dims]);
-  dispatch1D(ctx.device, pipe, bg, nRows * colTiles * 64, 64);
-}
-function q2q8Matmul(ctx, weightsQ2, act, out, nRows, K, nCols) {
-  const colTiles = Math.ceil(nCols / 64);
-  const dims = uniform(ctx.device, [{ u32: K }, { u32: nCols }, { u32: nRows }, { u32: colTiles }]);
-  const pipe = ctx.pipelines.get("q2_0_q8_0_matmul");
-  const bg = bindGroup(ctx.device, pipe, [weightsQ2, act.d, act.qs, out, dims]);
-  dispatch1D(ctx.device, pipe, bg, nRows * colTiles * 64, 64);
-}
-function projectQ1(ctx, x, weights, out, nRows, K, nCols) {
-  const act = quantizeQ8(ctx, x, nRows * K);
-  if (ctx.quantType === 42 /* Q2_0 */) {
-    q2q8Matmul(ctx, weights, act, out, nRows, K, nCols);
-  } else {
-    q1q8Matmul(ctx, weights, act, out, nRows, K, nCols);
-  }
-}
-function projectQuantized(ctx, x, weights, out, nRows, K, nCols, quantType) {
-  const act = quantizeQ8(ctx, x, nRows * K);
-  if (quantType === 42 /* Q2_0 */) {
-    q2q8Matmul(ctx, weights, act, out, nRows, K, nCols);
-  } else if (quantType === 41 /* Q1_0 */) {
-    q1q8Matmul(ctx, weights, act, out, nRows, K, nCols);
-  } else {
-    throw new Error(
-      `projectQuantized: unsupported weight quant type ${quantType} (supported: Q1_0=${41 /* Q1_0 */}, Q2_0=${42 /* Q2_0 */})`
-    );
-  }
-}
-function ropeImrope(ctx, data, nTokens, nHeads, headDim, rotDim, posBase, freqBase, scale = 1) {
-  const p = uniform(ctx.device, [
-    { u32: nHeads },
-    { u32: headDim },
-    { u32: rotDim },
-    { u32: posBase },
-    { f32: freqBase },
-    { f32: scale },
-    { u32: 0 },
-    { u32: 0 }
-  ]);
-  const pipe = ctx.pipelines.get("rope_imrope");
-  const pairsPerHead = Math.floor(rotDim / 2);
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [data, p]), nTokens * nHeads * pairsPerHead, 64);
-}
-function softmaxAttnHead(ctx, q, k, v, out, headDim, nKv, qHead, kvHead, scale) {
-  const p = uniform(ctx.device, [
-    { u32: headDim },
-    { u32: nKv },
-    { u32: qHead },
-    { u32: kvHead },
-    { f32: scale },
-    { u32: 0 },
-    { u32: 0 },
-    { u32: 0 }
-  ]);
-  const pipe = ctx.pipelines.get("softmax_attn");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [q, k, v, out, p]), 1, 1);
-}
-function softmaxAttnBatched(ctx, q, kCache, vCache, out, nTokens, nHeads, nHeadsKv, headDim, posBase, scale, kScale, vScale) {
-  const mode4bit = !!(kScale && vScale);
-  const p = uniform(ctx.device, [
-    { u32: nTokens },
-    { u32: nHeads },
-    { u32: nHeadsKv },
-    { u32: headDim },
-    { u32: posBase },
-    { f32: scale },
-    { u32: mode4bit ? 1 : 0 },
-    { u32: 0 }
-  ]);
-  if (headDim > 256) {
-    throw new Error(
-      `bonsai-ops: softmaxAttnBatched supports head_dim <= 256, got ${headDim}. Raise DPT in softmax_attn_batched.wgsl to ceil(head_dim/128) to extend it.`
-    );
-  }
-  if (mode4bit && headDim % 8 !== 0) {
-    throw new Error(
-      `bonsai-ops: softmaxAttnBatched 4-bit mode requires head_dim % 8 == 0, got ${headDim}.`
-    );
-  }
-  const pipe = ctx.pipelines.get("softmax_attn_batched");
-  const bg = bindGroup(ctx.device, pipe, [
-    q,
-    kCache,
-    vCache,
-    out,
-    p,
-    kScale ?? kvScaleDummy(ctx.device),
-    vScale ?? kvScaleDummy(ctx.device)
-  ]);
-  dispatch1D(ctx.device, pipe, bg, nTokens * nHeads, 1);
-}
-function causalConv1d(ctx, x, weight, bias, out, nTokens, channels, kernel) {
-  const p = uniform(ctx.device, [{ u32: nTokens }, { u32: channels }, { u32: kernel }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("causal_conv1d");
-  const bg = bindGroup(ctx.device, pipe, [x, weight, bias, out, p]);
-  dispatch1D(ctx.device, pipe, bg, nTokens * channels, 64);
-}
-function deltanetStep(ctx, q, k, v, g, beta, state, out, dK, dV, head) {
-  const p = uniform(ctx.device, [{ u32: dK }, { u32: dV }, { u32: head }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("deltanet");
-  const bg = bindGroup(ctx.device, pipe, [q, k, v, g, beta, state, out, p]);
-  dispatch1D(ctx.device, pipe, bg, 1, 1);
-}
-function swigluMul(ctx, gate, up, out, n) {
-  const p = uniform(ctx.device, [{ u32: n }]);
-  const pipe = ctx.pipelines.get("swiglu");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [gate, up, out, p]), n, 256);
-}
-function elementwiseInplace(ctx, io, b, n, op) {
-  const p = uniform(ctx.device, [{ u32: n }, { u32: op }, { u32: 0 }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("elementwise_inplace");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [io, b, p]), n, 256);
-}
-function siluDummy(device) {
-  let b = siluScratch.get(device);
-  if (!b) {
-    b = createStorage(device, 4, "silu_dummy");
-    siluScratch.set(device, b);
-  }
-  return b;
-}
-function kvScaleDummy(device) {
-  let b = kvScaleScratch.get(device);
-  if (!b) {
-    b = createStorage(device, 4, "kv_scale_dummy");
-    kvScaleScratch.set(device, b);
-  }
-  return b;
-}
-function mulSigmoidInplace(ctx, io, gate, n) {
-  elementwiseInplace(ctx, io, gate, n, 4);
-}
-function siluInplace(ctx, io, n) {
-  elementwiseInplace(ctx, io, siluDummy(ctx.device), n, 3);
-}
-function deltanetGate(ctx, alphaRaw, betaRaw, aLog, dtBias, gOut, betaOut, nTokens, heads) {
-  const p = uniform(ctx.device, [{ u32: nTokens }, { u32: heads }, { u32: 0 }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("deltanet_gate");
-  const bg = bindGroup(ctx.device, pipe, [alphaRaw, betaRaw, aLog, dtBias, gOut, betaOut, p]);
-  dispatch1D(ctx.device, pipe, bg, nTokens * heads, 64);
-}
-function deltanetSeq(ctx, q, k, v, gdec, beta, state, out, nTokens, vHeads, kHeads, headDim, vPerK) {
-  const p = uniform(ctx.device, [
-    { u32: nTokens },
-    { u32: vHeads },
-    { u32: kHeads },
-    { u32: headDim },
-    { u32: vPerK },
-    { u32: 0 },
-    { u32: 0 },
-    { u32: 0 }
-  ]);
-  const pipe = ctx.pipelines.get("deltanet_seq");
-  const bg = bindGroup(ctx.device, pipe, [q, k, v, gdec, beta, state, out, p]);
-  dispatch1D(ctx.device, pipe, bg, vHeads * headDim, 64);
-}
-function elementwise(ctx, a, b, out, n, op) {
-  if (out === a) {
-    elementwiseInplace(ctx, out, b, n, op);
-    return;
-  }
-  if (out === b) {
-    elementwiseInplace(ctx, out, a, n, op);
-    return;
-  }
-  const p = uniform(ctx.device, [{ u32: n }, { u32: op }, { u32: 0 }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("elementwise");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [a, b, out, p]), n, 256);
-}
-function residualAdd(ctx, acc, delta, n) {
-  elementwiseInplace(ctx, acc, delta, n, 0);
-}
-function sampleFromCandidates(ids, vals, k, temperature, opts, rng) {
-  const n = ids.length;
-  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => vals[b] - vals[a]);
-  const keep = order.slice(0, Math.max(1, Math.min(k, n)));
-  if (temperature <= 0) return ids[keep[0]];
-  const maxLogit = vals[keep[0]];
-  const probs = new Float64Array(keep.length);
-  let sum = 0;
-  for (let i = 0; i < keep.length; i++) {
-    const p = Math.exp((vals[keep[i]] - maxLogit) / temperature);
-    probs[i] = p;
-    sum += p;
-  }
-  if (!(sum > 0) || !Number.isFinite(sum)) return ids[keep[0]];
-  let cutoff = keep.length;
-  const topP = opts.topP ?? 1;
-  if (topP > 0 && topP < 1) {
-    let acc = 0;
-    for (let i = 0; i < keep.length; i++) {
-      acc += probs[i] / sum;
-      if (acc >= topP) {
-        cutoff = i + 1;
-        break;
-      }
-    }
-  }
-  let mass = 0;
-  for (let i = 0; i < cutoff; i++) mass += probs[i];
-  let r = rng() * mass;
-  for (let i = 0; i < cutoff; i++) {
-    r -= probs[i];
-    if (r <= 0) return ids[keep[i]];
-  }
-  return ids[keep[cutoff - 1]];
-}
-async function sampleToken(ctx, logits, vocab, opts = {}) {
-  const temperature = opts.temperature ?? 0;
-  const rng = opts.random ?? Math.random;
-  const TIMING = globalThis.__BONSAI_TIMING === true;
-  const _t0 = TIMING ? performance.now() : 0;
-  const penaltyActive = (opts.repetitionPenalty ?? 1) !== 1 && !!opts.recentIds?.length;
-  const kWanted = opts.topK && opts.topK > 0 ? Math.min(opts.topK, vocab) : Math.min(64, vocab);
-  const useGpuTopK = globalThis.__BONSAI_GPU_TOPK === true;
-  if (!penaltyActive && useGpuTopK) {
-    const picked = await gpuTopK(ctx, logits, vocab, Math.max(kWanted, 1));
-    if (picked && picked.ids.length) {
-      const _tg = TIMING ? performance.now() : 0;
-      if (TIMING) {
-        sampleTiming.readbackMs += _tg - _t0;
-        sampleTiming.calls++;
-      }
-      const out = sampleFromCandidates(picked.ids, picked.vals, kWanted, temperature, opts, rng);
-      if (TIMING) sampleTiming.selectMs += performance.now() - _tg;
-      return out;
-    }
-  }
-  const row = await readbackF32(ctx, logits, vocab);
-  const _t1 = TIMING ? performance.now() : 0;
-  if (TIMING) {
-    sampleTiming.readbackMs += _t1 - _t0;
-    sampleTiming.calls++;
-  }
-  const done = (v) => {
-    if (TIMING) sampleTiming.selectMs += performance.now() - _t1;
-    return v;
-  };
-  const penalty = opts.repetitionPenalty ?? 1;
-  if (penalty !== 1 && opts.recentIds?.length) {
-    for (const id of new Set(opts.recentIds)) {
-      if (id < 0 || id >= vocab) continue;
-      const v = row[id];
-      row[id] = v > 0 ? v / penalty : v * penalty;
-    }
-  }
-  if (temperature <= 0) {
-    let bi = 0;
-    let bv = -Infinity;
-    for (let i = 0; i < vocab; i++) if (row[i] > bv) {
-      bv = row[i];
-      bi = i;
-    }
-    return done(bi);
-  }
-  const k = opts.topK && opts.topK > 0 ? Math.min(opts.topK, vocab) : Math.min(64, vocab);
-  const cand = [];
-  let worst = -Infinity;
-  for (let i = 0; i < vocab; i++) {
-    const v = row[i];
-    if (cand.length === k && v <= worst) continue;
-    let j = cand.length;
-    while (j > 0 && row[cand[j - 1]] < v) j--;
-    cand.splice(j, 0, i);
-    if (cand.length > k) cand.pop();
-    worst = row[cand[cand.length - 1]];
-  }
-  const maxLogit = row[cand[0]];
-  const probs = new Float64Array(cand.length);
-  let sum = 0;
-  for (let i = 0; i < cand.length; i++) {
-    const p = Math.exp((row[cand[i]] - maxLogit) / temperature);
-    probs[i] = p;
-    sum += p;
-  }
-  if (!(sum > 0) || !Number.isFinite(sum)) return done(cand[0]);
-  let cutoff = cand.length;
-  const topP = opts.topP ?? 1;
-  if (topP > 0 && topP < 1) {
-    let acc = 0;
-    for (let i = 0; i < cand.length; i++) {
-      acc += probs[i] / sum;
-      if (acc >= topP) {
-        cutoff = i + 1;
-        break;
-      }
-    }
-  }
-  let mass = 0;
-  for (let i = 0; i < cutoff; i++) mass += probs[i];
-  let r = rng() * mass;
-  for (let i = 0; i < cutoff; i++) {
-    r -= probs[i];
-    if (r <= 0) return done(cand[i]);
-  }
-  return done(cand[cutoff - 1]);
-}
-async function sampleArgmax(ctx, logits, vocab, temperature = 0) {
-  const argmax = createStorage(ctx.device, 4, "argmax");
-  const maxval = createStorage(ctx.device, 4, "maxval");
-  const p = uniform(ctx.device, [{ u32: vocab }, { f32: temperature }, { u32: 0 }, { u32: 0 }]);
-  const pipe = ctx.pipelines.get("sampling");
-  dispatch1D(ctx.device, pipe, bindGroup(ctx.device, pipe, [logits, argmax, maxval, p]), 1, 1);
-  const buf = await readback(ctx.device, argmax, 4);
-  return new Uint32Array(buf)[0];
-}
-async function gpuTopK(ctx, logits, vocab, k) {
-  const {
-    chooseThreshold: chooseThreshold2,
-    LOGIT_HIST_BINS: LOGIT_HIST_BINS2,
-    LOGIT_RANGE_LO: LOGIT_RANGE_LO2,
-    LOGIT_RANGE_HI: LOGIT_RANGE_HI2,
-    TOPK_GATHER_CAPACITY: TOPK_GATHER_CAPACITY2
-  } = await Promise.resolve().then(() => (init_topk_threshold(), topk_threshold_exports));
-  const NBINS = LOGIT_HIST_BINS2;
-  const CAP = TOPK_GATHER_CAPACITY2;
-  const hist = createStorage(ctx.device, NBINS * 4, "topk_hist");
-  const outIdx = createStorage(ctx.device, CAP * 4, "topk_idx");
-  const outVal = createStorage(ctx.device, CAP * 4, "topk_val");
-  const counter = createStorage(ctx.device, 4, "topk_count");
-  const mkUniform = (threshold) => uniform(ctx.device, [
-    { u32: vocab },
-    { u32: NBINS },
-    { f32: LOGIT_RANGE_LO2 },
-    { f32: LOGIT_RANGE_HI2 },
-    { f32: threshold },
-    { u32: CAP },
-    { u32: 0 },
-    { u32: 0 }
-  ]);
-  const histPipe = ctx.pipelines.get("logit_topk", "hist_main");
-  const p1 = mkUniform(0);
-  dispatch1D(
-    ctx.device,
-    histPipe,
-    bindGroup(ctx.device, histPipe, [logits, hist, outIdx, outVal, counter, p1]),
-    Math.min(vocab, 65536),
-    256
-  );
-  const histBytes = await readback(ctx.device, hist, NBINS * 4);
-  const choice = chooseThreshold2(new Uint32Array(histBytes), LOGIT_RANGE_LO2, LOGIT_RANGE_HI2, k, CAP);
-  if (choice.overflow) return null;
-  const gatherPipe = ctx.pipelines.get("logit_topk", "gather_main");
-  const p2 = mkUniform(choice.threshold);
-  dispatch1D(
-    ctx.device,
-    gatherPipe,
-    bindGroup(ctx.device, gatherPipe, [logits, hist, outIdx, outVal, counter, p2]),
-    Math.min(vocab, 65536),
-    256
-  );
-  const countBytes = await readback(ctx.device, counter, 4);
-  const count = new Uint32Array(countBytes)[0];
-  if (count === 0 || count > CAP) return null;
-  const idsBytes = await readback(ctx.device, outIdx, count * 4);
-  const valsBytes = await readback(ctx.device, outVal, count * 4);
-  return { ids: new Uint32Array(idsBytes), vals: new Float32Array(valsBytes) };
-}
-async function readbackF32(ctx, buf, count) {
-  const ab = await readback(ctx.device, buf, count * F32);
-  return new Float32Array(ab);
-}
-async function dbgStats(ctx, buf, count, label) {
-  const a = await readbackF32(ctx, buf, Math.min(count, 8192));
-  let bad = 0, mn = Infinity, mx = -Infinity, s = 0;
-  for (let i = 0; i < a.length; i++) {
-    const v = a[i];
-    if (!Number.isFinite(v)) bad++;
-    else {
-      if (v < mn) mn = v;
-      if (v > mx) mx = v;
-      s += Math.abs(v);
-    }
-  }
-  const str = `${label}[bad=${bad} min=${mn.toExponential(1)} max=${mx.toExponential(1)} mean=${(s / a.length).toExponential(1)}]`;
-  console.log(`[bonsai] ${str}`);
-  return str;
-}
-var F32, Q8_BLOCK, Q8_BYTES_PER_BLOCK, siluScratch, kvScaleScratch, sampleTiming;
-var init_ops = __esm({
-  "m26"() {
-    "use strict";
-    init_dispatch();
-    init_types();
-    F32 = 4;
-    Q8_BLOCK = 32;
-    Q8_BYTES_PER_BLOCK = (1 + 8) * 4;
-    siluScratch = /* @__PURE__ */ new WeakMap();
-    kvScaleScratch = /* @__PURE__ */ new WeakMap();
-    sampleTiming = { readbackMs: 0, selectMs: 0, calls: 0 };
-  }
-});var block_full_attn_exports = {};
-__export(block_full_attn_exports, {
-  runFullAttnBlock: () => runFullAttnBlock
-});
-async function runFullAttnBlock(ctx, layer, io) {
-  const { hidden, nTokens, posBase } = io;
-  const { device, pipelines, weights, config, kv, kvMode } = ctx;
-  const kind = config.layerKinds[layer];
-  const gated = kind !== "dense-attn";
-  const names = blockTensorNames(kind, layer, config.ffnNormNames?.[layer]);
-  const [
-    attnNormName,
-    attnQName,
-    attnKName,
-    attnVName,
-    attnQNormName,
-    attnKNormName,
-    attnOutName,
-    ffnNormName,
-    ffnGateName,
-    ffnUpName,
-    ffnDownName
-  ] = names;
-  const { headCount, headCountKv, embeddingLength, keyLength, ropeDimensionCount, ropeFreqBase, rmsEps } = config;
-  const nHeads = headCount;
-  const nHeadsKv = headCountKv;
-  const headDim = keyLength ?? embeddingLength / headCount;
-  const attnScale = 1 / Math.sqrt(headDim);
-  const rotDim = ropeDimensionCount ?? headDim;
-  await weights.ensureLayer(layer);
-  const attnNormW = weights.get(attnNormName);
-  const attnQW = weights.get(attnQName);
-  const attnKW = weights.get(attnKName);
-  const attnVW = weights.get(attnVName);
-  const attnQNormW = weights.get(attnQNormName);
-  const attnKNormW = weights.get(attnKNormName);
-  const attnOutW = weights.get(attnOutName);
-  const ffnNormW = weights.get(ffnNormName);
-  const ffnGateW = weights.get(ffnGateName);
-  const ffnUpW = weights.get(ffnUpName);
-  const ffnDownW = weights.get(ffnDownName);
-  const h1 = scratchBuffer(ctx, nTokens * embeddingLength, "h1_attn");
-  rmsnorm(ctx, hidden, attnNormW, h1, nTokens, embeddingLength, rmsEps);
-  const tempQ = scratchBuffer(ctx, nTokens * nHeads * headDim, "tempQ");
-  const tempK = scratchBuffer(ctx, nTokens * nHeadsKv * headDim, "tempK");
-  const tempV = scratchBuffer(ctx, nTokens * nHeadsKv * headDim, "tempV");
-  const tempG = gated ? scratchBuffer(ctx, nTokens * nHeads * headDim, "tempG") : null;
-  projectQ1(ctx, h1, attnKW, tempK, nTokens, embeddingLength, nHeadsKv * headDim);
-  projectQ1(ctx, h1, attnVW, tempV, nTokens, embeddingLength, nHeadsKv * headDim);
-  if (gated) {
-    const tempQG = scratchBuffer(ctx, nTokens * nHeads * headDim * 2, "tempQG");
-    projectQ1(ctx, h1, attnQW, tempQG, nTokens, embeddingLength, nHeads * headDim * 2);
-    const tgt = beginCopies(device);
-    const rowQG = nHeads * headDim * 2;
-    const rowQ = nHeads * headDim;
-    for (let t = 0; t < nTokens; t++) {
-      for (let h = 0; h < nHeads; h++) {
-        const src = (t * rowQG + h * headDim * 2) * 4;
-        const dst = (t * rowQ + h * headDim) * 4;
-        tgt.enc.copyBufferToBuffer(tempQG, src, tempQ, dst, headDim * 4);
-        tgt.enc.copyBufferToBuffer(tempQG, src + headDim * 4, tempG, dst, headDim * 4);
-      }
-    }
-    finishCopies(device, tgt);
-  } else {
-    projectQ1(ctx, h1, attnQW, tempQ, nTokens, embeddingLength, nHeads * headDim);
-  }
-  const tempQn = scratchBuffer(ctx, nTokens * nHeads * headDim, "tempQn");
-  const tempKn = scratchBuffer(ctx, nTokens * nHeadsKv * headDim, "tempKn");
-  rmsnorm(ctx, tempQ, attnQNormW, tempQn, nTokens * nHeads, headDim, rmsEps);
-  rmsnorm(ctx, tempK, attnKNormW, tempKn, nTokens * nHeadsKv, headDim, rmsEps);
-  ropeImrope(ctx, tempQn, nTokens, nHeads, headDim, rotDim, posBase, ropeFreqBase);
-  ropeImrope(ctx, tempKn, nTokens, nHeadsKv, headDim, rotDim, posBase, ropeFreqBase);
-  const attnOut = scratchBuffer(ctx, nTokens * nHeads * headDim, "attn_out");
-  if (kvMode === "4bit") {
-    kv.append(layer, tempKn, tempV, nTokens, posBase);
-    const l4 = kv.layer(layer);
-    softmaxAttnBatched(ctx, tempQn, l4.k, l4.v, attnOut, nTokens, nHeads, nHeadsKv, headDim, posBase, attnScale, l4.kScale, l4.vScale);
-  } else {
-    kv.append(layer, tempKn, tempV, nTokens, 0, 0);
-    const { k: kCache, v: vCache } = kv.layer(layer);
-    softmaxAttnBatched(ctx, tempQn, kCache, vCache, attnOut, nTokens, nHeads, nHeadsKv, headDim, posBase, attnScale);
-  }
-  if (gated) mulSigmoidInplace(ctx, attnOut, tempG, nTokens * nHeads * headDim);
-  const attnOutProj = scratchBuffer(ctx, nTokens * embeddingLength, "attn_out_proj");
-  projectQ1(ctx, attnOut, attnOutW, attnOutProj, nTokens, nHeads * headDim, embeddingLength);
-  residualAdd(ctx, hidden, attnOutProj, nTokens * embeddingLength);
-  const h2 = scratchBuffer(ctx, nTokens * embeddingLength, "h2_ffn");
-  rmsnorm(ctx, hidden, ffnNormW, h2, nTokens, embeddingLength, rmsEps);
-  const ffnGate = scratchBuffer(ctx, nTokens * config.feedForwardLength, "ffn_gate");
-  const ffnUp = scratchBuffer(ctx, nTokens * config.feedForwardLength, "ffn_up");
-  projectQ1(ctx, h2, ffnGateW, ffnGate, nTokens, embeddingLength, config.feedForwardLength);
-  projectQ1(ctx, h2, ffnUpW, ffnUp, nTokens, embeddingLength, config.feedForwardLength);
-  const ffnGatedUp = scratchBuffer(ctx, nTokens * config.feedForwardLength, "ffn_gated_up");
-  swigluMul(ctx, ffnGate, ffnUp, ffnGatedUp, nTokens * config.feedForwardLength);
-  const ffnOut = scratchBuffer(ctx, nTokens * embeddingLength, "ffn_out");
-  projectQ1(ctx, ffnGatedUp, ffnDownW, ffnOut, nTokens, config.feedForwardLength, embeddingLength);
-  residualAdd(ctx, hidden, ffnOut, nTokens * embeddingLength);
-}
-var init_block_full_attn = __esm({
-  "m27"() {
-    "use strict";
-    init_dispatch();
-    init_ops();
-    init_layers();
-  }
-});var block_deltanet_exports = {};
-__export(block_deltanet_exports, {
-  runDeltaNetBlock: () => runDeltaNetBlock
-});
-async function runDeltaNetBlock(ctx, layer, io) {
-  const cfg = ctx.config;
-  const device = ctx.device;
-  const w = ctx.weights;
-  const dn = cfg.deltaNet;
-  if (!dn) {
-    throw new Error(
-      `bonsai-deltanet: layer ${layer} routed to the DeltaNet path but this model has no ssm.* geometry (dense model). This is a layer-classification bug, not a bad file.`
-    );
-  }
-  const nTokens = io.nTokens;
-  const embedLen = cfg.embeddingLength;
-  const ffnLen = cfg.feedForwardLength;
-  const eps = cfg.rmsEps;
-  const { numVHeads, numKHeads, headDim, qDim, kDim, vDim, convDim, convKernel, vPerKHead } = dn;
-  const names = blockTensorNames("linear-attn", layer);
-  if (names.length !== 14) {
-    throw new Error(
-      `block_deltanet layer ${layer}: expected 14 tensor names, got ${names.length}`
-    );
-  }
-  const [
-    attnNormN,
-    attnQkvN,
-    attnGateN,
-    ssmConvN,
-    ssmBetaN,
-    ssmAlphaN,
-    ssmAN,
-    ssmDtBiasN,
-    ssmNormN,
-    ssmOutN,
-    postAttnNormN,
-    ffnGateN,
-    ffnUpN,
-    ffnDownN
-  ] = names;
-  for (const name of names) {
-    if (!w.has(name)) {
-      throw new Error(
-        `block_deltanet layer ${layer}: missing tensor '${name}'. This layer is DeltaNet (linear-attn); ensure it was streamed via weights.ensureLayer(${layer}).`
-      );
-    }
-  }
-  const h1 = scratchBuffer(ctx, nTokens * embedLen, `dn.${layer}.h1`);
-  const qkv = scratchBuffer(ctx, nTokens * convDim, `dn.${layer}.qkv`);
-  const z = scratchBuffer(ctx, nTokens * vDim, `dn.${layer}.z`);
-  const qc = scratchBuffer(ctx, nTokens * qDim, `dn.${layer}.qc`);
-  const kc = scratchBuffer(ctx, nTokens * kDim, `dn.${layer}.kc`);
-  const vc = scratchBuffer(ctx, nTokens * vDim, `dn.${layer}.vc`);
-  const qn = scratchBuffer(ctx, nTokens * qDim, `dn.${layer}.qn`);
-  const kn = scratchBuffer(ctx, nTokens * kDim, `dn.${layer}.kn`);
-  const alphaRaw = scratchBuffer(ctx, nTokens * numVHeads, `dn.${layer}.alpha`);
-  const betaRaw = scratchBuffer(ctx, nTokens * numVHeads, `dn.${layer}.beta`);
-  const gBuf = scratchBuffer(ctx, nTokens * numVHeads, `dn.${layer}.g`);
-  const betaBuf = scratchBuffer(ctx, nTokens * numVHeads, `dn.${layer}.betaG`);
-  const recur = scratchBuffer(ctx, nTokens * vDim, `dn.${layer}.recur`);
-  const normOut = scratchBuffer(ctx, nTokens * vDim, `dn.${layer}.normOut`);
-  const ssmProj = scratchBuffer(ctx, nTokens * embedLen, `dn.${layer}.ssmProj`);
-  const h2 = scratchBuffer(ctx, nTokens * embedLen, `dn.${layer}.h2`);
-  const ffnG = scratchBuffer(ctx, nTokens * ffnLen, `dn.${layer}.ffnG`);
-  const ffnU = scratchBuffer(ctx, nTokens * ffnLen, `dn.${layer}.ffnU`);
-  const ffnM = scratchBuffer(ctx, nTokens * ffnLen, `dn.${layer}.ffnM`);
-  const ffnD = scratchBuffer(ctx, nTokens * embedLen, `dn.${layer}.ffnD`);
-  const convBias = scratchBuffer(ctx, convDim, `dn.${layer}.convBias`, { queueInit: true });
-  device.queue.writeBuffer(convBias, 0, new Float32Array(convDim));
-  const l2w = scratchBuffer(ctx, headDim, `dn.${layer}.l2w`, { queueInit: true });
-  device.queue.writeBuffer(l2w, 0, new Float32Array(headDim).fill(1 / Math.sqrt(headDim)));
-  const l2eps = 1e-6 / headDim;
-  rmsnorm(ctx, io.hidden, w.get(attnNormN), h1, nTokens, embedLen, eps);
-  projectQ1(ctx, h1, w.get(attnQkvN), qkv, nTokens, embedLen, convDim);
-  projectQ1(ctx, h1, w.get(attnGateN), z, nTokens, embedLen, vDim);
-  const histRows = convKernel - 1;
-  const ssmGen = ctx.ssm.generation ?? 0;
-  let entry = CONV_HISTORY.get(ctx.ssm);
-  if (!entry) {
-    entry = { gen: ssmGen, bufs: /* @__PURE__ */ new Map(), zeroed: /* @__PURE__ */ new Set() };
-    CONV_HISTORY.set(ctx.ssm, entry);
-  }
-  if (entry.gen !== ssmGen) {
-    entry.gen = ssmGen;
-    entry.zeroed.clear();
-  }
-  let hist = entry.bufs.get(layer);
-  if (!hist) {
-    hist = f32Buffer(device, histRows * convDim, `dn.${layer}.convHist`);
-    entry.bufs.set(layer, hist);
-    device.queue.writeBuffer(hist, 0, new Float32Array(histRows * convDim));
-    entry.zeroed.add(layer);
-  } else if (!entry.zeroed.has(layer)) {
-    device.queue.writeBuffer(hist, 0, new Float32Array(histRows * convDim));
-    entry.zeroed.add(layer);
-  }
-  const convIn = scratchBuffer(ctx, (nTokens + histRows) * convDim, `dn.${layer}.convIn`);
-  const convOutFull = scratchBuffer(ctx, (nTokens + histRows) * convDim, `dn.${layer}.convOutF`);
-  {
-    const tgt = beginCopies(device);
-    tgt.enc.copyBufferToBuffer(hist, 0, convIn, 0, histRows * convDim * 4);
-    tgt.enc.copyBufferToBuffer(qkv, 0, convIn, histRows * convDim * 4, nTokens * convDim * 4);
-    tgt.enc.copyBufferToBuffer(convIn, nTokens * convDim * 4, hist, 0, histRows * convDim * 4);
-    finishCopies(device, tgt);
-  }
-  causalConv1d(ctx, convIn, w.get(ssmConvN), convBias, convOutFull, nTokens + histRows, convDim, convKernel);
-  siluInplace(ctx, convOutFull, (nTokens + histRows) * convDim);
-  {
-    const tgt = beginCopies(device);
-    for (let t = 0; t < nTokens; t++) {
-      const src = (t + histRows) * convDim * 4;
-      tgt.enc.copyBufferToBuffer(convOutFull, src, qc, t * qDim * 4, qDim * 4);
-      tgt.enc.copyBufferToBuffer(convOutFull, src + qDim * 4, kc, t * kDim * 4, kDim * 4);
-      tgt.enc.copyBufferToBuffer(convOutFull, src + (qDim + kDim) * 4, vc, t * vDim * 4, vDim * 4);
-    }
-    finishCopies(device, tgt);
-  }
-  rmsnorm(ctx, qc, l2w, qn, nTokens * numKHeads, headDim, l2eps);
-  rmsnorm(ctx, kc, l2w, kn, nTokens * numKHeads, headDim, l2eps);
-  projectQ1(ctx, h1, w.get(ssmAlphaN), alphaRaw, nTokens, embedLen, numVHeads);
-  projectQ1(ctx, h1, w.get(ssmBetaN), betaRaw, nTokens, embedLen, numVHeads);
-  deltanetGate(ctx, alphaRaw, betaRaw, w.get(ssmAN), w.get(ssmDtBiasN), gBuf, betaBuf, nTokens, numVHeads);
-  const state = ctx.ssm.state(layer);
-  deltanetSeq(ctx, qn, kn, vc, gBuf, betaBuf, state, recur, nTokens, numVHeads, numKHeads, headDim, vPerKHead);
-  rmsnorm(ctx, recur, w.get(ssmNormN), normOut, nTokens * numVHeads, headDim, eps);
-  siluInplace(ctx, z, nTokens * vDim);
-  elementwise(ctx, normOut, z, normOut, nTokens * vDim, 1);
-  projectQ1(ctx, normOut, w.get(ssmOutN), ssmProj, nTokens, vDim, embedLen);
-  residualAdd(ctx, io.hidden, ssmProj, nTokens * embedLen);
-  rmsnorm(ctx, io.hidden, w.get(postAttnNormN), h2, nTokens, embedLen, eps);
-  projectQ1(ctx, h2, w.get(ffnGateN), ffnG, nTokens, embedLen, ffnLen);
-  projectQ1(ctx, h2, w.get(ffnUpN), ffnU, nTokens, embedLen, ffnLen);
-  swigluMul(ctx, ffnG, ffnU, ffnM, nTokens * ffnLen);
-  projectQ1(ctx, ffnM, w.get(ffnDownN), ffnD, nTokens, ffnLen, embedLen);
-  residualAdd(ctx, io.hidden, ffnD, nTokens * embedLen);
-}
-var CONV_HISTORY;
-var init_block_deltanet = __esm({
-  "m28"() {
-    "use strict";
-    init_ops();
-    init_dispatch();
-    init_layers();
-    CONV_HISTORY = /* @__PURE__ */ new WeakMap();
-  }
-});function blockTensorNames(kind, layer, ffnNormName) {
-  const p = `blk.${layer}.`;
-  if (kind === "full-attn" || kind === "dense-attn") {
-    return [
-      `${p}attn_norm.weight`,
-      // 0 input RMSNorm
-      `${p}attn_q.weight`,
-      // 1 q proj -> nHeads*headDim (2x when gated; see LayerKind)
-      `${p}attn_k.weight`,
-      // 2 k proj -> nKvHeads*headDim
-      `${p}attn_v.weight`,
-      // 3 v proj -> nKvHeads*headDim
-      `${p}attn_q_norm.weight`,
-      // 4 per-head RMSNorm over headDim, applied to q
-      `${p}attn_k_norm.weight`,
-      // 5 per-head RMSNorm over headDim, applied to k
-      `${p}attn_output.weight`,
-      // 6 output proj -> embedding
-      // 7 pre-FFN RMSNorm. qwen35 calls it post_attention_norm, stock qwen3 calls it
-      // ffn_norm; the caller passes the name config resolved BY PRESENCE. The default keeps
-      // the qwen35 name so existing callers (harnesses, tests) are unchanged.
-      ffnNormName ?? `${p}post_attention_norm.weight`,
-      `${p}ffn_gate.weight`,
-      // 8
-      `${p}ffn_up.weight`,
-      // 9
-      `${p}ffn_down.weight`
-      // 10
-    ];
-  }
-  return [
-    `${p}attn_norm.weight`,
-    // 0 input RMSNorm
-    `${p}attn_qkv.weight`,
-    // 1 fused in-proj -> q|k|v (qDim+kDim+vDim)
-    `${p}attn_gate.weight`,
-    // 2 output gate z -> vDim
-    `${p}ssm_conv1d.weight`,
-    // 3 depthwise causal conv over the qkv channels (F32)
-    `${p}ssm_beta.weight`,
-    // 4 beta proj -> numVHeads (write strength)
-    `${p}ssm_alpha.weight`,
-    // 5 alpha proj -> numVHeads (decay input)
-    `${p}ssm_a`,
-    // 6 A_log per v-head (F32 [numVHeads])
-    `${p}ssm_dt.bias`,
-    // 7 dt bias per v-head (F32 [numVHeads])
-    `${p}ssm_norm.weight`,
-    // 8 gated RMSNorm over v headDim (F32 [headDim])
-    `${p}ssm_out.weight`,
-    // 9 output proj vDim -> embedding
-    `${p}post_attention_norm.weight`,
-    // 10 pre-FFN RMSNorm
-    `${p}ffn_gate.weight`,
-    // 11
-    `${p}ffn_up.weight`,
-    // 12
-    `${p}ffn_down.weight`
-    // 13
-  ];
-}
-async function runBlock(ctx, layer, io) {
-  const kind = ctx.config.layerKinds[layer];
-  await ctx.weights.ensureLayer(layer);
-  if (kind === "full-attn" || kind === "dense-attn") {
-    const { runFullAttnBlock: runFullAttnBlock2 } = await Promise.resolve().then(() => (init_block_full_attn(), block_full_attn_exports));
-    await runFullAttnBlock2(ctx, layer, io);
-  } else if (kind === "linear-attn") {
-    const { runDeltaNetBlock: runDeltaNetBlock2 } = await Promise.resolve().then(() => (init_block_deltanet(), block_deltanet_exports));
-    await runDeltaNetBlock2(ctx, layer, io);
-  } else {
-    throw new Error(`runBlock: unknown layer kind '${kind}' at layer ${layer}`);
-  }
-}
-var init_layers = __esm({
-  "m29"() {
-    "use strict";
-  }
-});var embed_lmhead_exports = {};
-__export(embed_lmhead_exports, {
-  embedTokens: () => embedTokens,
-  projectLogits: () => projectLogits
-});
-async function embedTokens(ctx, tokenIds, hiddenOut, weights, embeddingLength) {
-  const embeddingName = "token_embd.weight";
-  if (!weights.has(embeddingName)) {
-    throw new Error(
-      `bonsai-embed: token embedding table '${embeddingName}' not loaded; call weights.loadGlobals(['${embeddingName}']) first`
-    );
-  }
-  const embeddingBuffer = weights.get(embeddingName);
-  const nTokens = tokenIds.length;
-  if (embeddingLength % QK1_0 !== 0) {
-    throw new Error(
-      `bonsai-embed: embeddingLength ${embeddingLength} not a multiple of QK1_0 (${QK1_0})`
-    );
-  }
-  const embedType = weights.typeOf(embeddingName);
-  const isQ2 = embedType === 42 /* Q2_0 */;
-  if (!isQ2 && embedType !== 41 /* Q1_0 */) {
-    throw new Error(
-      `bonsai-embed: '${embeddingName}' has unsupported quant type ${embedType} (supported: Q1_0=${41 /* Q1_0 */}, Q2_0=${42 /* Q2_0 */})`
-    );
-  }
-  const GPU_BYTES_PER_BLOCK = isQ2 ? 36 : 20;
-  const blocksPerRow = embeddingLength / QK1_0;
-  const bytesPerRow = blocksPerRow * GPU_BYTES_PER_BLOCK;
-  const f32Out = new Float32Array(nTokens * embeddingLength);
-  const stagingBuffer = createStorage(ctx.device, bytesPerRow, "embed_staging");
-  for (let t = 0; t < nTokens; t++) {
-    const tokenId = tokenIds[t];
-    if (!Number.isInteger(tokenId) || tokenId < 0) {
-      throw new Error(
-        `bonsai-embed: token ID ${tokenId} at position ${t} is invalid (must be non-negative integer)`
-      );
-    }
-    const rowByteOffset = tokenId * bytesPerRow;
-    const enc = ctx.device.createCommandEncoder();
-    enc.copyBufferToBuffer(embeddingBuffer, rowByteOffset, stagingBuffer, 0, bytesPerRow);
-    ctx.device.queue.submit([enc.finish()]);
-    const rowBytes = await readback(ctx.device, stagingBuffer, bytesPerRow);
-    const rowU8 = new Uint8Array(rowBytes);
-    for (let b = 0; b < blocksPerRow; b++) {
-      const blockStart = b * GPU_BYTES_PER_BLOCK;
-      const dequantized = isQ2 ? dequantQ2Block(readQ2Block(rowU8, blockStart)) : dequantQ1Block(readQ1Block(rowU8, blockStart));
-      const outOffset = t * embeddingLength + b * QK1_0;
-      f32Out.set(dequantized, outOffset);
-    }
-  }
-  ctx.device.queue.writeBuffer(hiddenOut, 0, f32Out);
-  stagingBuffer.destroy();
-}
-async function projectLogits(ctx, hidden, lastTokenIndex, weights, config, vocabSize) {
-  const outputNormName = "output_norm.weight";
-  if (!weights.has(outputNormName)) {
-    throw new Error(
-      `bonsai-lmhead: output norm '${outputNormName}' not loaded; call weights.loadGlobals(['${outputNormName}']) first`
-    );
-  }
-  const outputNormWeight = weights.get(outputNormName);
-  const embeddingLength = config.embeddingLength;
-  const eps = config.rmsEps;
-  const lastRow = f32Buffer(ctx.device, embeddingLength, "last_row");
-  {
-    const enc = ctx.device.createCommandEncoder();
-    enc.copyBufferToBuffer(
-      hidden,
-      lastTokenIndex * embeddingLength * 4,
-      lastRow,
-      0,
-      embeddingLength * 4
-    );
-    ctx.device.queue.submit([enc.finish()]);
-  }
-  const normedHidden = f32Buffer(ctx.device, embeddingLength, "normed_hidden");
-  rmsnorm(ctx, lastRow, outputNormWeight, normedHidden, 1, embeddingLength, eps);
-  {
-    const { BONSAI_DEBUG: BONSAI_DEBUG2 } = await Promise.resolve().then(() => (init_forward(), forward_exports));
-    if (BONSAI_DEBUG2) {
-      const { readbackF32: readbackF322 } = await Promise.resolve().then(() => (init_ops(), ops_exports));
-      const nh = await readbackF322(ctx, normedHidden, embeddingLength);
-      let sabs = 0, mn = Infinity, mx = -Infinity;
-      for (const v of nh) {
-        if (v < mn) mn = v;
-        if (v > mx) mx = v;
-        sabs += Math.abs(v);
-      }
-      console.log(`[bonsai] normedHidden: min=${mn.toFixed(3)} max=${mx.toFixed(3)} meanabs=${(sabs / nh.length).toFixed(4)}`);
-      console.log("[bonsai] NH_DUMP " + JSON.stringify(Array.from(nh)));
-    }
-  }
-  const outputWeightName = "output.weight";
-  const usingWeightTie = !weights.has(outputWeightName);
-  const headWeightName = usingWeightTie ? "token_embd.weight" : outputWeightName;
-  if (!weights.has(headWeightName)) {
-    throw new Error(
-      `bonsai-lmhead: LM head weights '${headWeightName}' not loaded; call weights.loadGlobals(['${headWeightName}']) first`
-    );
-  }
-  const headWeights = weights.get(headWeightName);
-  const logits = f32Buffer(ctx.device, vocabSize, "logits");
-  projectQuantized(
-    ctx,
-    normedHidden,
-    headWeights,
-    logits,
-    1,
-    embeddingLength,
-    vocabSize,
-    weights.typeOf(headWeightName)
-  );
-  lastRow.destroy();
-  normedHidden.destroy();
-  return logits;
-}
-var init_embed_lmhead = __esm({
-  "m30"() {
-    "use strict";
-    init_dispatch();
-    init_ops();
-    init_reference();
-    init_types();
-  }
-});var forward_exports = {};
-__export(forward_exports, {
-  BONSAI_DEBUG: () => BONSAI_DEBUG,
-  bonsaiDebugEnabled: () => bonsaiDebugEnabled,
-  captureRow: () => captureRow,
-  decodeStep: () => decodeStep,
-  prefill: () => prefill
-});
-function bonsaiDebugEnabled() {
-  return globalThis.__BONSAI_DEBUG === true;
-}
-function captureRow(layer, row) {
-  const g = globalThis;
-  const tag = g.__BONSAI_CAPTURE_TAG;
-  if (!tag) return;
-  (g.__BONSAI_ROWS ?? (g.__BONSAI_ROWS = {}))[`${tag}:${layer}`] = row.slice();
-}
-function captureActive() {
-  return typeof globalThis.__BONSAI_CAPTURE_TAG === "string";
-}
-async function prefill(ctx, hidden, tokenIds, tokenizer, onLayer, posBase = 0) {
-  await embedTokens(ctx, tokenIds, hidden, ctx.weights, ctx.config.embeddingLength);
-  const embedLen = ctx.config.embeddingLength;
-  const lastOff = (tokenIds.length - 1) * embedLen;
-  const probeLast = async (label, layer) => {
-    if (!bonsaiDebugEnabled() && !captureActive()) return;
-    const slice = await readbackF32(ctx, hidden, tokenIds.length * embedLen);
-    const row = slice.subarray(lastOff, lastOff + embedLen);
-    if (layer !== void 0) {
-      const wantPos = globalThis.__BONSAI_CAPTURE_POS;
-      const off = typeof wantPos === "number" && wantPos >= 0 && wantPos < tokenIds.length ? wantPos * embedLen : lastOff;
-      captureRow(layer, slice.subarray(off, off + embedLen));
-    }
-    if (!bonsaiDebugEnabled()) return;
-    let nan = 0, mn = Infinity, mx = -Infinity, sabs = 0;
-    for (let i = 0; i < row.length; i++) {
-      const v = row[i];
-      if (!Number.isFinite(v)) nan++;
-      else {
-        if (v < mn) mn = v;
-        if (v > mx) mx = v;
-        sabs += Math.abs(v);
-      }
-    }
-    console.log(`[bonsai] ${label}: bad=${nan} min=${mn.toFixed(3)} max=${mx.toFixed(3)} meanabs=${(sabs / row.length).toFixed(4)}`);
-  };
-  const probeRows = async (label, positions) => {
-    if (!bonsaiDebugEnabled()) return;
-    const slice = await readbackF32(ctx, hidden, tokenIds.length * embedLen);
-    for (const p of positions) {
-      const row = slice.subarray(p * embedLen, (p + 1) * embedLen);
-      let sabs = 0, mn = Infinity, mx = -Infinity;
-      for (let i = 0; i < row.length; i++) {
-        const v = row[i];
-        if (v < mn) mn = v;
-        if (v > mx) mx = v;
-        sabs += Math.abs(v);
-      }
-      console.log(`[bonsai] ${label} pos${p} (id ${tokenIds[p]}): min=${mn.toFixed(4)} max=${mx.toFixed(4)} meanabs=${(sabs / row.length).toFixed(5)}`);
-    }
-  };
-  await probeRows("embed-row", [0, 1, 2, tokenIds.length - 1]);
-  await probeLast("after embed");
-  const io = { hidden, nTokens: tokenIds.length, posBase };
-  for (let l = 0; l < ctx.config.blockCount; l++) {
-    for (let ahead = 1; ahead <= READ_AHEAD_LAYERS; ahead++) {
-      if (l + ahead < ctx.config.blockCount) ctx.weights.prefetchLayer(l + ahead);
-    }
-    await ctx.weights.ensureLayer(l);
-    onLayer?.(l, ctx.config.blockCount);
-    beginBatch(ctx.device);
-    try {
-      await runBlock(ctx, l, io);
-    } finally {
-      flushBatch(ctx.device);
-      flushDeferred(ctx.device);
-    }
-    const kind = ctx.config.layerKinds[l];
-    await probeLast(`after L${l} (${kind})`, l);
-  }
-  ctx.kv.advance(tokenIds.length);
-  const lastTokenIndex = tokenIds.length - 1;
-  const logits = await projectLogits(ctx, hidden, lastTokenIndex, ctx.weights, ctx.config, tokenizer.vocabSize);
-  return { logits };
-}
-async function decodeStep(ctx, hidden, posBase, tokenizer) {
-  const io = { hidden, nTokens: 1, posBase };
-  const probeDecode = async (l) => {
-    if (!bonsaiDebugEnabled() && !captureActive()) return;
-    const row = await readbackF32(ctx, hidden, ctx.config.embeddingLength);
-    captureRow(l, row);
-    if (!bonsaiDebugEnabled()) return;
-    let nan = 0, mn = Infinity, mx = -Infinity, sabs = 0;
-    for (let i = 0; i < row.length; i++) {
-      const v = row[i];
-      if (!Number.isFinite(v)) nan++;
-      else {
-        if (v < mn) mn = v;
-        if (v > mx) mx = v;
-        sabs += Math.abs(v);
-      }
-    }
-    console.log(
-      `[bonsai] DECODE_L${l}: bad=${nan} min=${mn.toFixed(3)} max=${mx.toFixed(3)} meanabs=${(sabs / row.length).toFixed(4)}`
-    );
-  };
-  for (let l = 0; l < ctx.config.blockCount; l++) {
-    await ctx.weights.ensureLayer(l);
-    beginBatch(ctx.device);
-    try {
-      await runBlock(ctx, l, io);
-    } finally {
-      flushBatch(ctx.device);
-      flushDeferred(ctx.device);
-    }
-    await probeDecode(l);
-    const inj = globalThis.__BONSAI_INJECT;
-    if (inj && inj.layer === l && inj.row.length === ctx.config.embeddingLength) {
-      ctx.device.queue.writeBuffer(hidden, 0, inj.row);
-      console.log(`[bonsai] INJECT applied at L${l} (decode hidden <- prefill row)`);
-    }
-  }
-  ctx.kv.advance(1);
-  const logits = await projectLogits(ctx, hidden, 0, ctx.weights, ctx.config, tokenizer.vocabSize);
-  return { logits };
-}
-var READ_AHEAD_LAYERS, BONSAI_DEBUG;
-var init_forward = __esm({
-  "m31"() {
-    "use strict";
-    init_layers();
-    init_embed_lmhead();
-    init_ops();
-    init_dispatch();
-    READ_AHEAD_LAYERS = 3;
-    BONSAI_DEBUG = false;
-  }
-});var bonsai_worker_core_exports = {};
-__export(bonsai_worker_core_exports, {
-  initBonsaiRuntime: () => initBonsaiRuntime
-});
-async function initBonsaiRuntime(scope) {
-  let runtime = null;
-  let currentModelId = "";
-  let stopped = false;
-  const post = (m) => scope.postMessage(m);
-  async function loadKernels() {
-    const { WGSL_SOURCES: WGSL_SOURCES2 } = await Promise.resolve().then(() => (init_wgsl_sources(), wgsl_sources_exports));
-    return WGSL_SOURCES2;
-  }
-  async function acquireDevice() {
-    const gpu = navigator.gpu;
-    if (!gpu) {
-      throw new Error("WebGPU not available on this browser");
-    }
-    let adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
-    if (!adapter) {
-      adapter = await gpu.requestAdapter({ forceFallbackAdapter: true }).catch(() => null);
-    }
-    if (!adapter) {
-      throw new Error("No WebGPU adapter found");
-    }
-    const limits = adapter.limits ?? {};
-    const requiredLimits = {};
-    for (const key of [
-      "maxStorageBufferBindingSize",
-      "maxBufferSize",
-      "maxComputeWorkgroupStorageSize"
-    ]) {
-      const v = limits[key];
-      if (typeof v === "number" && v > 0) requiredLimits[key] = v;
-    }
-    const device = await adapter.requestDevice({ requiredLimits });
-    const mobile = isMobileDevice();
-    const budget = maxDispatchesPerSubmit(classifyAdapter(adapter.info), {
-      windowsTdr: typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent ?? ""),
-      mobile
-    });
-    if (budget > 0) setSubmitBudget(device, budget);
-    return device;
-  }
-  async function load(modelId) {
-    try {
-      const device = await acquireDevice();
-      const kernelSources = await loadKernels();
-      runtime = createBonsaiRuntime({ device, kernelSources });
-      currentModelId = modelId;
-      await runtime.load({
-        modelUrl: resolveBonsaiUrl(modelId),
-        onProgress: (p) => post({ type: "progress", progress: p.percent, file: p.detail })
-      });
-      post({ type: "ready", modelId });
-    } catch (e) {
-      post({
-        type: "error",
-        message: `bonsai load failed: ${e.message}`
-      });
-    }
-  }
-  async function generate(req) {
-    if (!runtime?.loaded) {
-      return post({
-        type: "error",
-        message: "no model loaded \u2014 send {type:'load'} first"
-      });
-    }
-    stopped = false;
-    try {
-      const { tokenizer, config, device, pipelines, weights } = runtime.loaded;
-      const maxTokens = req.maxTokens ?? 256;
-      const temperature = req.temperature ?? 0.7;
-      const topK = req.topK ?? 20;
-      const topP = req.topP ?? 0.95;
-      const repetitionPenalty = req.repetitionPenalty ?? 1.1;
-      const ANSWER_RESERVE = 128;
-      const reasoningBudget = req.reasoningBudget ?? Math.max(32, maxTokens - ANSWER_RESERVE);
-      const promptIds = tokenizer.encodeChat(req.messages);
-      const promptLen = promptIds.length;
-      const KV_CEILING = 8192;
-      const KV_CAPACITY = Math.min(KV_CEILING, promptLen + maxTokens + 1);
-      if (promptLen + maxTokens + 1 > KV_CEILING) {
-        return post({
-          type: "error",
-          message: `context too long: prompt ${promptLen} + maxTokens ${maxTokens} > ${KV_CEILING} KV slots. Shorten the prompt or lower maxTokens.`
-        });
-      }
-      const { F32KvCache: F32KvCache2 } = await Promise.resolve().then(() => (init_kv_f32(), kv_f32_exports));
-      const { SsmState: SsmState2 } = await Promise.resolve().then(() => (init_ssm_state(), ssm_state_exports));
-      const { f32Buffer: f32Buffer2, sampleToken: sampleToken2 } = await Promise.resolve().then(() => (init_ops(), ops_exports));
-      const { prefill: prefill2, decodeStep: decodeStep2 } = await Promise.resolve().then(() => (init_forward(), forward_exports));
-      const { embedTokens: embedTokens2 } = await Promise.resolve().then(() => (init_embed_lmhead(), embed_lmhead_exports));
-      const kv = new F32KvCache2(device, {
-        fullAttnLayers: config.fullAttnLayers,
-        headCountKv: config.headCountKv,
-        headDim: config.keyLength ?? config.embeddingLength / config.headCount,
-        capacity: KV_CEILING
-      });
-      const dn = config.deltaNet;
-      const ssmState = new SsmState2(device, {
-        linearAttnLayers: config.linearAttnLayers,
-        heads: dn?.numVHeads ?? 0,
-        dK: dn?.headDim ?? 0,
-        dV: dn?.headDim ?? 0,
-        dConv: dn?.convKernel,
-        ssmInnerSize: dn?.vDim,
-        convDim: dn?.convDim
-      });
-      if (!dn && config.linearAttnLayers.length > 0) {
-        throw new Error(
-          `bonsai: ${config.linearAttnLayers.length} DeltaNet layers classified but model exposes no ssm.* geometry.`
-        );
-      }
-      kv.reset();
-      ssmState.reset();
-      const hiddenBuffer = f32Buffer2(
-        device,
-        promptLen * config.embeddingLength,
-        "hidden_prefill"
-      );
-      const decodeHidden = f32Buffer2(
-        device,
-        config.embeddingLength,
-        "hidden_decode"
-      );
-      const quantType = weights.weightQuantType();
-      const ctx = {
-        device,
-        pipelines,
-        weights,
-        config,
-        kv,
-        kvMode: "f32",
-        ssm: ssmState,
-        quantType
-      };
-      post({
-        type: "progress",
-        progress: 10,
-        file: `prefill ${promptLen} tokens`
-      });
-      const prefillStart = Date.now();
-      const prefillResult = await prefill2(ctx, hiddenBuffer, promptIds, tokenizer, (l, total) => {
-        post({
-          type: "progress",
-          progress: 10 + Math.floor(l / total * 30),
-          file: `layer ${l + 1}/${total}`
-        });
-      });
-      const prefillMs = Date.now() - prefillStart;
-      const REPLACEMENT = "\uFFFD";
-      const stableText = (ids) => {
-        const s = tokenizer.decode(ids);
-        let end = s.length;
-        while (end > 0 && s[end - 1] === REPLACEMENT) end--;
-        return s.slice(0, end);
-      };
-      const thinkIds = [];
-      const answerIds = [];
-      let thinkText = "";
-      let answerText = "";
-      const emit = (ids, prev, channel) => {
-        const next = stableText(ids);
-        if (next.length > prev.length && next.startsWith(prev)) {
-          post({ type: "token", text: next.slice(prev.length), channel });
-          return next;
-        }
-        return next.length >= prev.length ? next : prev;
-      };
-      let inThink = false;
-      if (tokenizer.thinkEndId !== void 0 && tokenizer.thinkStartId !== void 0) {
-        const lastOpen = promptIds.lastIndexOf(tokenizer.thinkStartId);
-        const lastClose = promptIds.lastIndexOf(tokenizer.thinkEndId);
-        inThink = lastOpen !== -1 && lastOpen > lastClose;
-      }
-      let forcedClose = false;
-      const REPEAT_WINDOW = 64;
-      const recent = [];
-      let logits = prefillResult.logits;
-      let pos = promptLen;
-      let produced = 0;
-      let stopReason = "max-tokens";
-      const decodeStartTime = Date.now();
-      while (produced < maxTokens && !stopped) {
-        const id = await sampleToken2(
-          { device, pipelines, quantType },
-          logits,
-          tokenizer.vocabSize,
-          {
-            temperature,
-            topK,
-            topP,
-            repetitionPenalty,
-            recentIds: recent
-          }
-        );
-        produced++;
-        if (tokenizer.isStop(id)) {
-          stopReason = "stop-token";
-          break;
-        }
-        recent.push(id);
-        if (recent.length > REPEAT_WINDOW) recent.shift();
-        if (id === tokenizer.thinkEndId) {
-          inThink = false;
-        } else if (id === tokenizer.thinkStartId) {
-          inThink = true;
-        } else if (inThink) {
-          thinkIds.push(id);
-          thinkText = emit(thinkIds, thinkText, "thinking");
-        } else {
-          answerIds.push(id);
-          answerText = emit(answerIds, answerText, "answer");
-        }
-        await embedTokens2(ctx, [id], decodeHidden, weights, config.embeddingLength);
-        logits = (await decodeStep2(ctx, decodeHidden, pos++, tokenizer)).logits;
-        if (inThink && !forcedClose && tokenizer.thinkEndId !== void 0 && produced >= reasoningBudget) {
-          forcedClose = true;
-          inThink = false;
-          await embedTokens2(
-            ctx,
-            [tokenizer.thinkEndId],
-            decodeHidden,
-            weights,
-            config.embeddingLength
-          );
-          logits = (await decodeStep2(ctx, decodeHidden, pos++, tokenizer)).logits;
-          post({ type: "progress", file: "reasoning budget reached \u2014 answering" });
-        }
-        const progress = 10 + Math.floor(produced / maxTokens * 80);
-        const tps = produced / ((Date.now() - decodeStartTime) / 1e3);
-        const phase = inThink ? "thinking" : "answering";
-        post({
-          type: "progress",
-          progress,
-          file: `${phase} \xB7 ${produced} tok \xB7 ${tps.toFixed(1)} tok/s`
-        });
-      }
-      if (stopped) stopReason = "interrupted";
-      const elapsedMs = Date.now() - decodeStartTime;
-      const tokensPerSecond = produced > 0 ? produced / elapsedMs * 1e3 : 0;
-      const reply = answerText.trim() || (thinkText.trim() ? "I ran out of room to finish that thought \u2014 my reasoning is above. Ask again and I'll be more direct." : "");
-      post({
-        type: "done",
-        text: reply,
-        reasoning: thinkText.trim() || void 0,
-        tokensPerSecond
-      });
-    } catch (e) {
-      post({
-        type: "error",
-        message: `bonsai generate failed: ${e.message}`
-      });
-    }
-  }
-  return { load, generate, interrupt: () => {
-    stopped = true;
-  } };
-}
-var init_bonsai_worker_core = __esm({
-  "m32"() {
-    "use strict";
-    init_bonsai();
-    init_gpu_class();
-    init_dispatch();
-    init_device_class();
-    init_bonsai_models();
-  }
-});var WEBML_MODELS = [
-  // Bonsai models via our own clean-room WGSL kernels (ported from the PrismML llama.cpp fork).
-  // Aitherium's kernels, running on YOUR GPU, in your browser. Four sizes, all live as of 2026-07-28.
-  {
-    id: "bonsai-1.7b",
-    label: "Bonsai 1.7B (Phone)",
-    repo: "prism-ml/Bonsai-1.7B-gguf",
-    runtime: "bonsai-kernels",
-    task: "text-generation",
-    approxDownloadMB: 236,
-    blurb: "Lightest size \u2014 236 MB, designed for phones and older devices.",
-    ready: true
-  },
-  {
-    id: "bonsai-4b",
-    label: "Bonsai 4B (Default)",
-    repo: "prism-ml/Bonsai-4B-gguf",
-    runtime: "bonsai-kernels",
-    task: "text-generation",
-    approxDownloadMB: 545,
-    blurb: "Balanced: smart and fast \u2014 the recommended in-browser model.",
-    ready: true
-  },
-  {
-    id: "bonsai-8b",
-    label: "Bonsai 8B (Desktop)",
-    repo: "prism-ml/Bonsai-8B-gguf",
-    runtime: "bonsai-kernels",
-    task: "text-generation",
-    approxDownloadMB: 1104,
-    blurb: "Better reasoning, ~1 GB. Desktop GPU with 8+ GB RAM.",
-    ready: true
-  },
-  {
-    id: "bonsai-27b-text",
-    label: "Bonsai 27B (Reasoning)",
-    repo: "prism-ml/Bonsai-27B-gguf",
-    runtime: "bonsai-kernels",
-    task: "text-generation",
-    approxDownloadMB: 3800,
-    blurb: "Full reasoning brain. 3.6 GB, needs a real desktop GPU (e.g., RTX 4090).",
-    ready: true
-  },
-  {
-    // Gemma via transformers.js needs an ONNX build; the mobile-QAT repo has none
-    // (it's for custom kernels, like the webml-community Space). Not runnable on
-    // the transformers.js path — kept as a slot until we ship Gemma WGSL kernels.
-    id: "gemma-4-e2b",
-    label: "Gemma 4 (E2B, mobile)",
-    repo: "google/gemma-4-E2B-it-qat-mobile-transformers",
-    runtime: "transformers-js",
-    task: "text-generation",
-    dtype: "q4",
-    approxDownloadMB: 900,
-    blurb: "Google's QAT mobile Gemma 4 \u2014 needs its own WebGPU kernels (coming).",
-    ready: false
-  },
-  {
-    id: "bonsai-image",
-    label: "Bonsai Image",
-    repo: "prism-ml/Bonsai-27B-gguf",
-    runtime: "bonsai-image",
-    task: "text-to-image",
-    approxDownloadMB: 3800,
-    blurb: "In-browser image generation via custom WebGPU kernels (Phase 4 \u2014 not yet wired).",
-    ready: false
-  }
-];
-function getWebMLModel(id) {
-  return WEBML_MODELS.find((m) => m.id === id);
-}function runWebMLWorker(scope, deps) {
-  let runtimeHandler = null;
-  async function handleFirstLoad(modelId) {
-    const model = getWebMLModel(modelId);
-    if (!model) {
-      scope.postMessage({
-        type: "error",
-        message: `unknown model '${modelId}'`
-      });
-      return;
-    }
-    if (model.runtime === "transformers-js") {
-      const handler = await initTransformersRuntime(scope, deps);
-      runtimeHandler = handler;
-      handler({ type: "load", modelId });
-    } else if (model.runtime === "bonsai-kernels") {
-      const handler = await initBonsaiRuntime2(scope);
-      runtimeHandler = handler;
-      handler({ type: "load", modelId });
-    } else {
-      scope.postMessage({
-        type: "error",
-        message: `model '${modelId}' uses the '${model.runtime}' runtime, not wired in this worker yet`
-      });
-    }
-  }
-  scope.addEventListener("message", (e) => {
-    const req = e.data;
-    if (!runtimeHandler) {
-      if (req.type === "load") {
-        void handleFirstLoad(req.modelId).catch((err) => {
-          scope.postMessage({
-            type: "error",
-            message: "runtime failed to start: " + (err instanceof Error ? err.message : String(err))
-          });
-        });
-      }
-    } else {
-      runtimeHandler(req);
-    }
-  });
-}
-async function initTransformersRuntime(scope, deps) {
-  let pipe = null;
-  let stopped = false;
-  const post = (msg) => scope.postMessage(msg);
-  async function load(modelId) {
-    const model = getWebMLModel(modelId);
-    if (!model) return post({ type: "error", message: `unknown model '${modelId}'` });
-    try {
-      const { pipeline } = await deps.loadTransformers();
-      pipe = await pipeline(model.task, model.repo, {
-        device: "webgpu",
-        dtype: model.dtype ?? "q4",
-        progress_callback: (p) => {
-          if (p && p.status === "progress") post({ ...p, type: "progress" });
-        }
-      });
-      post({ type: "ready", modelId });
-    } catch (e) {
-      post({ type: "error", message: `load failed: ${e.message}` });
-    }
-  }
-  async function generate(req) {
-    if (!pipe) return post({ type: "error", message: "no model loaded \u2014 send {type:'load'} first" });
-    stopped = false;
-    try {
-      const { TextStreamer } = await deps.loadTransformers();
-      const generator = pipe;
-      let count = 0;
-      const start = performance.now();
-      const streamer = new TextStreamer(generator.tokenizer, {
-        skip_prompt: true,
-        skip_special_tokens: true,
-        callback_function: (text2) => {
-          if (stopped) return;
-          count += 1;
-          post({ type: "token", text: text2 });
-        }
-      });
-      const out = await generator(req.messages, {
-        max_new_tokens: req.maxTokens ?? 512,
-        do_sample: (req.temperature ?? 0) > 0,
-        temperature: req.temperature ?? 1,
-        streamer
-      });
-      const seconds = (performance.now() - start) / 1e3;
-      const last = out?.[0]?.generated_text;
-      const text = Array.isArray(last) && last.length ? String(last[last.length - 1]?.content ?? "") : String(last ?? "");
-      post({ type: "done", text, tokensPerSecond: seconds > 0 ? count / seconds : void 0 });
-    } catch (e) {
-      post({ type: "error", message: `generate failed: ${e.message}` });
-    }
-  }
-  return (req) => {
-    if (req.type === "load") void load(req.modelId);
-    else if (req.type === "generate") void generate(req);
-    else if (req.type === "interrupt") stopped = true;
-  };
-}
-async function initBonsaiRuntime2(scope) {
-  const { initBonsaiRuntime: createBonsaiHandler } = await Promise.resolve().then(() => (init_bonsai_worker_core(), bonsai_worker_core_exports));
-  const handler = await createBonsaiHandler(scope);
-  return (req) => {
-    if (req.type === "load") void handler.load(req.modelId);
-    else if (req.type === "generate") void handler.generate(req);
-    else if (req.type === "interrupt") handler.interrupt();
-  };
-}init_bonsai_models();var MAX_TOOL_ROUNDS = 3;
-function renderToolsSystemBlock(specs) {
-  let out = "You may call functions to help answer the user.\n\n";
-  out += "You are provided with function signatures within <tools></tools> XML tags:\n";
-  out += "<tools>";
-  for (const tool of specs) out += "\n" + JSON.stringify(tool);
-  out += "\n</tools>\n\n";
-  out += "For each function call, return a json object with function name and ";
-  out += "arguments within <tool_call></tool_call> XML tags:\n";
-  out += '<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call>';
-  return out;
-}
-function parseToolCalls(text) {
-  const calls = [];
-  let rest = text;
-  const patterns = [
-    /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g,
-    /<tool_call>\s*(\{[\s\S]*\})\s*$/g
-  ];
-  for (const re of patterns) {
-    rest = rest.replace(re, (whole, body) => {
-      const parsed = tryParseCallBody(body);
-      if (parsed) {
-        calls.push({ ...parsed, raw: whole });
-        return "";
-      }
-      return whole;
-    });
-    if (calls.length) break;
-  }
-  return { calls, rest: rest.trim() };
-}
-function tryParseCallBody(body) {
-  const candidates = [
-    body,
-    // Small-model repairs: trailing commas, single→double quotes on keys.
-    body.replace(/,\s*([}\]])/g, "$1"),
-    body.replace(/'/g, '"').replace(/,\s*([}\]])/g, "$1")
-  ];
-  for (const c of candidates) {
-    try {
-      const obj = JSON.parse(c);
-      const name = obj?.name;
-      if (typeof name === "string" && name) {
-        const args = obj.arguments ?? obj.parameters ?? {};
-        return { name, arguments: typeof args === "object" && args ? args : {} };
-      }
-    } catch {
-    }
-  }
-  return null;
-}init_device_class();
-var DEFAULT_ENTRY_URL = new URL("./bonsai-worker-entry.js?v=2", import.meta.url).href;
-function createBonsaiChatWorker(opts) {
-  const entry = opts?.entryUrl ?? DEFAULT_ENTRY_URL;
-  const worker = new Worker(entry, { type: "module" });
-  const listeners = /* @__PURE__ */ new Set();
-  const fail = (message) => {
-    for (const l of listeners) l({ type: "error", message });
-  };
-  worker.addEventListener("message", (e) => {
-    const msg = e.data;
-    for (const l of listeners) l(msg);
-  });
-  worker.addEventListener("error", (e) => {
-    fail("on-device worker failed to start: " + (e && e.message || "module load error"));
-  });
-  worker.addEventListener("messageerror", () => {
-    fail("on-device worker rejected a message (protocol mismatch)");
-  });
-  return {
-    post: (msg) => worker.postMessage(msg),
-    on: (listener) => {
-      listeners.add(listener);
-    },
-    interrupt: () => worker.postMessage({ type: "interrupt" }),
-    dispose: () => worker.terminate()
-  };
-}
-export {
-  BONSAI_MODELS_INFO,
-  DEFAULT_BONSAI_MODEL_ID,
-  FIRST_TOKEN_FAIL_MS,
-  LOAD_FAIL_MS,
-  MAX_TOOL_ROUNDS,
-  autoBootAllowed,
-  classifyAdapter2 as classifyAdapter,
-  createBonsaiChatWorker,
-  getBonsaiModel,
-  gpuLaneAllowed,
-  isMobileDevice,
-  parseToolCalls,
-  pickBonsaiContext,
-  renderToolsSystemBlock,
-  resolveBonsaiUrl,
-  runWebMLWorker,
-  suggestBonsaiModelId
+`,nr=`// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
+// \xA9 2026 Aitherium, LLC. Original work.
+// Original Aitherium WebGPU implementation.
+//
+// THE THREE OPS THE VAE DECODER NEEDS AND THE TRANSFORMER DOES NOT.
+//
+// In-browser image generation was written off as needing a foreign kernel family. It does
+// not. \`:8798\` serves FLUX.2 Klein 4B, and the giveaway is in its own tensor names \u2014
+// \`transformer_blocks.0.attn.to_q\` \u2014 MMDiT is a diffusion TRANSFORMER: attention + MLP over
+// latent patches, which the existing kernels already do. Its text encoder is Qwen3-4B, the
+// same architecture family as the Bonsai text models that already run in a visitor's browser.
+//
+// What genuinely has no equivalent is the VAE DECODER, and only three ops of it. From the
+// shipped model's own vae/config.json (AutoencoderKLFlux2):
+//
+//     block_out_channels : [128, 256, 512, 512]
+//     up_block_types     : 4 x UpDecoderBlock2D
+//     layers_per_block   : 2
+//     latent_channels    : 32
+//     norm_num_groups    : 32
+//     act_fn             : silu
+//
+// so the decode graph is: conv_in -> mid(resnet + attn) -> 4 x (2 resnets + 2x upsample)
+// -> GroupNorm -> SiLU -> conv_out(3ch). Attention and SiLU already exist. These are the rest.
+//
+// LAYOUT: NCHW, f32, batch 1 \u2014 one image at a time is what a browser does, and NCHW keeps a
+// channel's plane contiguous, which is what makes GroupNorm's reduction a simple range.
+//
+// PERFORMANCE NOTE, learned the expensive way on softmax_attn_batched: a kernel written as
+// one-thread-per-output looks fine and silently becomes the bottleneck when the tensor grows.
+// The last up block runs at full output resolution, so at 1024x1024x128 that is 134M outputs.
+// conv2d here is one thread per OUTPUT ELEMENT with the reduction inside it \u2014 correct, and
+// deliberately the simple version first, because the transformer kernels earned their
+// optimisations only after a CPU differential proved them right. Optimise after it is correct
+// and after a measurement says which part is slow, not before.
+
+struct ConvP {
+  in_c   : u32,
+  out_c  : u32,
+  h      : u32,   // input height
+  w      : u32,   // input width
+  k      : u32,   // square kernel size (1 or 3 here)
+  pad    : u32,
+  stride : u32,
+  _p0    : u32,
 };
+
+@group(0) @binding(0) var<storage, read>       x       : array<f32>;  // [in_c*h*w]
+@group(0) @binding(1) var<storage, read>       weight  : array<f32>;  // [out_c*in_c*k*k]
+@group(0) @binding(2) var<storage, read>       bias    : array<f32>;  // [out_c]
+@group(0) @binding(3) var<storage, read_write> y       : array<f32>;  // [out_c*oh*ow]
+@group(0) @binding(4) var<uniform>             p       : ConvP;
+
+fn out_h() -> u32 { return (p.h + 2u * p.pad - p.k) / p.stride + 1u; }
+fn out_w() -> u32 { return (p.w + 2u * p.pad - p.k) / p.stride + 1u; }
+
+/**
+ * 2-D convolution, NCHW, one thread per output element.
+ *
+ * Zero padding is done by SKIPPING out-of-range taps rather than by materialising a padded
+ * input. Materialising would allocate another full tensor per layer \u2014 at decoder resolutions
+ * that is hundreds of megabytes of pure copy, on a device that is also holding a language
+ * model.
+ */
+@compute @workgroup_size(64)
+fn conv2d_main(@builtin(global_invocation_id) gid : vec3<u32>,
+               @builtin(num_workgroups) nwg : vec3<u32>) {
+  let oh = out_h();
+  let ow = out_w();
+  let total = p.out_c * oh * ow;
+  let idx = gid.x + gid.y * nwg.x * 64u;
+  if (idx >= total) { return; }
+
+  let ox = idx % ow;
+  let oy = (idx / ow) % oh;
+  let oc = idx / (ow * oh);
+
+  var acc : f32 = bias[oc];
+  for (var ic : u32 = 0u; ic < p.in_c; ic = ic + 1u) {
+    let x_plane = ic * p.h * p.w;
+    let w_base = ((oc * p.in_c) + ic) * p.k * p.k;
+    for (var ky : u32 = 0u; ky < p.k; ky = ky + 1u) {
+      // Signed arithmetic: with pad=1 the first row's taps land at -1, and doing this in
+      // u32 wraps to ~4 billion and reads far out of bounds. WebGPU's robust access would
+      // return 0 there, which LOOKS like correct zero-padding and is not \u2014 it silently
+      // drops the real taps too on the opposite edge.
+      let iy = i32(oy * p.stride) + i32(ky) - i32(p.pad);
+      if (iy < 0 || iy >= i32(p.h)) { continue; }
+      for (var kx : u32 = 0u; kx < p.k; kx = kx + 1u) {
+        let ix = i32(ox * p.stride) + i32(kx) - i32(p.pad);
+        if (ix < 0 || ix >= i32(p.w)) { continue; }
+        acc = acc + x[x_plane + u32(iy) * p.w + u32(ix)] * weight[w_base + ky * p.k + kx];
+      }
+    }
+  }
+  y[idx] = acc;
+}
+
+struct GroupNormP {
+  c       : u32,
+  h       : u32,
+  w       : u32,
+  groups  : u32,
+  eps     : f32,
+  _p0 : u32, _p1 : u32, _p2 : u32,
+};
+
+@group(0) @binding(0) var<storage, read>       gx      : array<f32>;
+@group(0) @binding(1) var<storage, read>       gamma   : array<f32>;  // [c]
+@group(0) @binding(2) var<storage, read>       beta    : array<f32>;  // [c]
+@group(0) @binding(3) var<storage, read_write> gy      : array<f32>;
+@group(0) @binding(4) var<uniform>             gp      : GroupNormP;
+
+/**
+ * GroupNorm \u2014 one WORKGROUP per group, cooperating over that group's whole slab.
+ *
+ * NOT one thread per group. A group at decoder sizes is (c/groups) x h x w elements \u2014 with
+ * 128 channels, 32 groups and a 512x512 plane that is over a million values, and a single
+ * thread walking it is the same one-lane mistake that made attention 8x slower than it had
+ * to be. The mean and variance are a parallel reduction; the normalise pass is grid-strided.
+ *
+ * Two passes over the slab (mean, then variance) rather than the sum/sum-of-squares trick:
+ * at f32 with a million-element reduction the one-pass form loses precision exactly where
+ * the variance is small, which is where a VAE's activations live.
+ */
+var<workgroup> red_sum : array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn groupnorm_main(@builtin(workgroup_id) wg : vec3<u32>,
+                  @builtin(local_invocation_id) lid : vec3<u32>) {
+  let g = wg.x;
+  if (g >= gp.groups) { return; }        // uniform across the workgroup \u2014 safe with barriers
+
+  let cpg = gp.c / gp.groups;            // channels per group
+  let plane = gp.h * gp.w;
+  let slab = cpg * plane;                // elements this group owns
+  let base = g * slab;
+  let tid = lid.x;
+
+  // ---- mean ----
+  var s : f32 = 0.0;
+  var i : u32 = tid;
+  loop {
+    if (i >= slab) { break; }
+    s = s + gx[base + i];
+    i = i + 256u;
+  }
+  red_sum[tid] = s;
+  workgroupBarrier();
+  var stride : u32 = 128u;
+  loop {
+    if (stride == 0u) { break; }
+    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }
+    workgroupBarrier();
+    stride = stride / 2u;
+  }
+  let mean = red_sum[0] / f32(slab);
+  workgroupBarrier();
+
+  // ---- variance ----
+  var v : f32 = 0.0;
+  i = tid;
+  loop {
+    if (i >= slab) { break; }
+    let d = gx[base + i] - mean;
+    v = v + d * d;
+    i = i + 256u;
+  }
+  red_sum[tid] = v;
+  workgroupBarrier();
+  stride = 128u;
+  loop {
+    if (stride == 0u) { break; }
+    if (tid < stride) { red_sum[tid] = red_sum[tid] + red_sum[tid + stride]; }
+    workgroupBarrier();
+    stride = stride / 2u;
+  }
+  let inv_std = 1.0 / sqrt(red_sum[0] / f32(slab) + gp.eps);
+  workgroupBarrier();
+
+  // ---- normalise + per-CHANNEL affine ----
+  // gamma/beta are indexed by absolute channel, not by group: a group spans cpg channels and
+  // each has its own scale. Using the group index here is an easy and completely silent
+  // error \u2014 the image comes out plausible and wrong.
+  i = tid;
+  loop {
+    if (i >= slab) { break; }
+    let ch = g * cpg + (i / plane);
+    gy[base + i] = (gx[base + i] - mean) * inv_std * gamma[ch] + beta[ch];
+    i = i + 256u;
+  }
+}
+
+struct UpP {
+  c : u32,
+  h : u32,
+  w : u32,
+  scale : u32,
+};
+
+@group(0) @binding(0) var<storage, read>       ux : array<f32>;
+@group(0) @binding(1) var<storage, read_write> uy : array<f32>;
+@group(0) @binding(2) var<uniform>             up : UpP;
+
+/**
+ * Nearest-neighbour upsample by an integer factor \u2014 what UpDecoderBlock2D does before its
+ * convolution (diffusers' Upsample2D default is nearest, and the conv that follows is what
+ * turns the blockiness into detail). Bilinear here would be a different model.
+ */
+@compute @workgroup_size(64)
+fn upsample_nearest_main(@builtin(global_invocation_id) gid : vec3<u32>,
+                         @builtin(num_workgroups) nwg : vec3<u32>) {
+  let oh = up.h * up.scale;
+  let ow = up.w * up.scale;
+  let total = up.c * oh * ow;
+  let idx = gid.x + gid.y * nwg.x * 64u;
+  if (idx >= total) { return; }
+
+  let ox = idx % ow;
+  let oy = (idx / ow) % oh;
+  let ch = idx / (ow * oh);
+
+  let sx = ox / up.scale;
+  let sy = oy / up.scale;
+  uy[idx] = ux[ch * up.h * up.w + sy * up.w + sx];
+}
+`,rr={causal_conv1d:$n,deltanet:In,deltanet_gate:Mn,deltanet_seq:Wn,elementwise:Cn,elementwise_inplace:Un,kv_quant_4bit:Kn,logit_topk:Fn,q1_0_dequant:Qn,q1_0_q8_0_matmul:zn,q2_0_dequant:jn,q2_0_q8_0_matmul:Hn,quantize_q8_0:Yn,rmsnorm:Xn,rope_imrope:Vn,sampling:Jn,softmax_attn:Zn,softmax_attn_batched:er,swiglu:tr,vae_ops:nr}}}),or={};re(or,{F32KvCache:()=>ir});var ir,Ho=A({m23(){"use strict";Ve(),Ee(),ir=class{constructor(e,t){this.device=e,this.cfg=t,this.layers=new Map,this.capacity=t.capacity,this.perPos=t.headCountKv*t.headDim;const n=this.capacity*this.perPos*4;for(const o of t.fullAttnLayers)this.layers.set(o,{k:this.alloc(n,`kv_f32.k.${o}`),v:this.alloc(n,`kv_f32.v.${o}`),length:0})}alloc(e,t){return this.device.createBuffer({size:Math.max(4,e),usage:I.STORAGE|I.COPY_DST|I.COPY_SRC,label:t})}layer(e){const t=this.layers.get(e);if(!t)throw new Error(`bonsai-kv_f32: layer ${e} has no F32 KV cache (not a full-attn layer)`);return t}append(e,t,r,n,o=0,i=0){const s=this.layers.get(e);if(!s)throw new Error(`bonsai-kv_f32: layer ${e} has no F32 KV cache`);if(s.length+n>this.capacity)throw new Error(`bonsai-kv_f32: layer ${e} capacity ${this.capacity} exceeded (length=${s.length}, append=${n})`);const u=s.length*this.perPos*4,l=n*this.perPos*4,c=Ue(this.device);c.enc.copyBufferToBuffer(t,o,s.k,u,l),c.enc.copyBufferToBuffer(r,i,s.v,u,l),Ke(this.device,c),s.length+=n}advance(e){}filledLength(){let e=null;for(const[t,r]of this.layers)if(e===null)e=r.length;else if(r.length!==e)throw new Error(`bonsai-kv_f32: layers disagree on filled length (layer ${t}=${r.length}, expected ${e}) \u2014 the KV cache is inconsistent`);return e??0}currentLength(e){const t=this.layers.get(e);if(!t)throw new Error(`bonsai-kv_f32: layer ${e} has no F32 KV cache`);return t.length}reset(){for(const e of this.layers.values())e.length=0}truncate(e){if(e<0)throw new Error(`bonsai-kv_f32: truncate(${e}) \u2014 negative length`);for(const t of this.layers.values()){if(e>t.length)throw new Error(`bonsai-kv_f32: truncate(${e}) exceeds filled length ${t.length} \u2014 cannot extend a cache by declaration`);t.length=e}}}}}),ar={};re(ar,{SsmState:()=>sr});var sr,Yo=A({m24(){"use strict";Ve(),sr=class{constructor(e,t){this.device=e,this.cfg=t,this.gen=0,this.states=new Map,this.convStates=new Map;const n=t.heads*t.dK*t.dV*4;for(const o of t.linearAttnLayers)this.states.set(o,this.alloc(n,`ssm.S.${o}`));if(t.dConv!==void 0&&t.ssmInnerSize!==void 0){const i=(t.dConv-1)*(t.convDim??t.ssmInnerSize)*4;for(const s of t.linearAttnLayers)this.convStates.set(s,this.alloc(i,`ssm.conv_state.${s}`))}}alloc(e,t){return this.device.createBuffer({size:Math.max(4,e),usage:I.STORAGE|I.COPY_DST|I.COPY_SRC,label:t})}state(e){const t=this.states.get(e);if(!t)throw new Error(`bonsai-ssm: layer ${e} has no DeltaNet state`);return t}convState(e){return this.convStates.get(e)}get generation(){return this.gen}reset(){this.gen++;const e=new Float32Array(this.cfg.heads*this.cfg.dK*this.cfg.dV);for(const t of this.states.values())this.device.queue.writeBuffer(t,0,e);if(this.cfg.dConv!==void 0&&this.cfg.ssmInnerSize!==void 0){const t=this.cfg.convDim??this.cfg.ssmInnerSize,r=new Float32Array((this.cfg.dConv-1)*t);for(const n of this.convStates.values())this.device.queue.writeBuffer(n,0,r)}}}}}),ur={};re(ur,{LOGIT_HIST_BINS:()=>dr,LOGIT_RANGE_HI:()=>cr,LOGIT_RANGE_LO:()=>lr,TOPK_GATHER_CAPACITY:()=>hr,chooseThreshold:()=>Xo});function Xo(e,t,r,n,o){const i=e.length,s=Math.max(r-t,1e-6);let a=0;for(let u=0;u<i;u++)if(a+=e[u],a>=n)return{threshold:r-(u+1)/i*s,expected:a,overflow:a>o,reason:a>o?`bin ${u} of ${i} holds ${a} candidates, over the ${o} the gather can hold`:`bin ${u} of ${i} reaches ${a} candidates for k=${n}`};return{threshold:t,expected:a,overflow:!0,reason:`histogram holds only ${a} counts, fewer than k=${n} \u2014 refusing to threshold`}}var lr,cr,dr,hr,Vo=A({m25(){"use strict";lr=-50,cr=50,dr=1024,hr=2048}}),vt={};re(vt,{Q8_BLOCK:()=>xt,Q8_BYTES_PER_BLOCK:()=>kr,causalConv1d:()=>mr,dbgStats:()=>oi,deltanetGate:()=>br,deltanetSeq:()=>_r,deltanetStep:()=>Zo,elementwise:()=>wr,elementwiseInplace:()=>Ne,f32Buffer:()=>qe,gpuTopK:()=>vr,mulSigmoidInplace:()=>gr,projectQ1:()=>C,projectQuantized:()=>pr,q1q8Matmul:()=>yt,q2q8Matmul:()=>St,quantizeQ8:()=>kt,readbackF32:()=>Re,residualAdd:()=>je,rmsnorm:()=>Z,ropeImrope:()=>Et,sampleArgmax:()=>ri,sampleTiming:()=>me,sampleToken:()=>ni,scratchBuffer:()=>w,siluInplace:()=>Tt,softmaxAttnBatched:()=>Lt,softmaxAttnHead:()=>Jo,swigluMul:()=>At});function qe(e,t,r,n){return H(e,Math.max(tt,t*tt),r,n)}function w(e,t,r,n){const o=qe(e.device,t,r,n);return An(e.device,o),o}function z(e,t){const r=Mo(t),n=Go(e,r.byteLength);return e.queue.writeBuffer(n,0,r),An(e,n),n}function Z(e,t,r,n,o,i,s){const a=z(e.device,[{u32:i},{f32:s},{u32:0},{u32:0}]),u=e.pipelines.get("rmsnorm");W(e.device,u,M(e.device,u,[t,r,n,a]),o,1)}function kt(e,t,r){const n=Math.ceil(r/xt),o=H(e.device,n*4,"act_d"),i=H(e.device,n*8*4,"act_qs"),s=e.pipelines.get("quantize_q8_0");return W(e.device,s,M(e.device,s,[t,o,i]),n,1),{d:o,qs:i,nBlocks:n}}function yt(e,t,r,n,o,i,s){const a=Math.ceil(s/64),u=z(e.device,[{u32:i},{u32:s},{u32:o},{u32:a}]),d=e.pipelines.get("q1_0_q8_0_matmul"),l=M(e.device,d,[t,r.d,r.qs,n,u]);W(e.device,d,l,o*a*64,64)}function St(e,t,r,n,o,i,s){const a=Math.ceil(s/64),u=z(e.device,[{u32:i},{u32:s},{u32:o},{u32:a}]),d=e.pipelines.get("q2_0_q8_0_matmul"),l=M(e.device,d,[t,r.d,r.qs,n,u]);W(e.device,d,l,o*a*64,64)}function C(e,t,r,n,o,i,s){const a=kt(e,t,o*i);e.quantType===42?St(e,r,a,n,o,i,s):yt(e,r,a,n,o,i,s)}function pr(e,t,r,n,o,i,s,a){const u=kt(e,t,o*i);if(a===42)St(e,r,u,n,o,i,s);else if(a===41)yt(e,r,u,n,o,i,s);else throw new Error(`projectQuantized: unsupported weight quant type ${a} (supported: Q1_0=41, Q2_0=42)`)}function Et(e,t,r,n,o,i,s,a,u=1){const d=z(e.device,[{u32:n},{u32:o},{u32:i},{u32:s},{f32:a},{f32:u},{u32:0},{u32:0}]),l=e.pipelines.get("rope_imrope"),c=Math.floor(i/2);W(e.device,l,M(e.device,l,[t,d]),r*n*c,64)}function Jo(e,t,r,n,o,i,s,a,u,d){const l=z(e.device,[{u32:i},{u32:s},{u32:a},{u32:u},{f32:d},{u32:0},{u32:0},{u32:0}]),c=e.pipelines.get("softmax_attn");W(e.device,c,M(e.device,c,[t,r,n,o,l]),1,1)}function Lt(e,t,r,n,o,i,s,a,u,d,l,c,m){const p=!!(c&&m),f=z(e.device,[{u32:i},{u32:s},{u32:a},{u32:u},{u32:d},{f32:l},{u32:p?1:0},{u32:0}]);if(u>256)throw new Error(`bonsai-ops: softmaxAttnBatched supports head_dim <= 256, got ${u}. Raise DPT in softmax_attn_batched.wgsl to ceil(head_dim/128) to extend it.`);if(p&&u%8!==0)throw new Error(`bonsai-ops: softmaxAttnBatched 4-bit mode requires head_dim % 8 == 0, got ${u}.`);const g=e.pipelines.get("softmax_attn_batched"),h=M(e.device,g,[t,r,n,o,f,c??fr(e.device),m??fr(e.device)]);W(e.device,g,h,i*s,1)}function mr(e,t,r,n,o,i,s,a){const u=z(e.device,[{u32:i},{u32:s},{u32:a},{u32:0}]),d=e.pipelines.get("causal_conv1d"),l=M(e.device,d,[t,r,n,o,u]);W(e.device,d,l,i*s,64)}function Zo(e,t,r,n,o,i,s,a,u,d,l){const c=z(e.device,[{u32:u},{u32:d},{u32:l},{u32:0}]),m=e.pipelines.get("deltanet"),p=M(e.device,m,[t,r,n,o,i,s,a,c]);W(e.device,m,p,1,1)}function At(e,t,r,n,o){const i=z(e.device,[{u32:o}]),s=e.pipelines.get("swiglu");W(e.device,s,M(e.device,s,[t,r,n,i]),o,256)}function Ne(e,t,r,n,o){const i=z(e.device,[{u32:n},{u32:o},{u32:0},{u32:0}]),s=e.pipelines.get("elementwise_inplace");W(e.device,s,M(e.device,s,[t,r,i]),n,256)}function ei(e){let t=Pt.get(e);return t||(t=H(e,4,"silu_dummy"),Pt.set(e,t)),t}function fr(e){let t=Ot.get(e);return t||(t=H(e,4,"kv_scale_dummy"),Ot.set(e,t)),t}function gr(e,t,r,n){Ne(e,t,r,n,4)}function Tt(e,t,r){Ne(e,t,ei(e.device),r,3)}function br(e,t,r,n,o,i,s,a,u){const d=z(e.device,[{u32:a},{u32:u},{u32:0},{u32:0}]),l=e.pipelines.get("deltanet_gate"),c=M(e.device,l,[t,r,n,o,i,s,d]);W(e.device,l,c,a*u,64)}function _r(e,t,r,n,o,i,s,a,u,d,l,c,m){const p=z(e.device,[{u32:u},{u32:d},{u32:l},{u32:c},{u32:m},{u32:0},{u32:0},{u32:0}]),f=e.pipelines.get("deltanet_seq"),g=M(e.device,f,[t,r,n,o,i,s,a,p]);W(e.device,f,g,d*c,64)}function wr(e,t,r,n,o,i){if(n===t){Ne(e,n,r,o,i);return}if(n===r){Ne(e,n,t,o,i);return}const s=z(e.device,[{u32:o},{u32:i},{u32:0},{u32:0}]),a=e.pipelines.get("elementwise");W(e.device,a,M(e.device,a,[t,r,n,s]),o,256)}function je(e,t,r,n){Ne(e,t,r,n,0)}function ti(e,t,r,n,o,i){const s=e.length,u=Array.from({length:s},(h,b)=>b).sort((h,b)=>t[b]-t[h]).slice(0,Math.max(1,Math.min(r,s)));if(n<=0)return e[u[0]];const d=t[u[0]],l=new Float64Array(u.length);let c=0;for(let h=0;h<u.length;h++){const b=Math.exp((t[u[h]]-d)/n);l[h]=b,c+=b}if(!(c>0)||!Number.isFinite(c))return e[u[0]];let m=u.length;const p=o.topP??1;if(p>0&&p<1){let h=0;for(let b=0;b<u.length;b++)if(h+=l[b]/c,h>=p){m=b+1;break}}let f=0;for(let h=0;h<m;h++)f+=l[h];let g=i()*f;for(let h=0;h<m;h++)if(g-=l[h],g<=0)return e[u[h]];return e[u[m-1]]}async function ni(e,t,r,n={}){const o=n.temperature??0,i=n.random??Math.random,s=globalThis.__BONSAI_TIMING===!0,a=s?performance.now():0,u=(n.repetitionPenalty??1)!==1&&!!n.recentIds?.length,d=n.topK&&n.topK>0?Math.min(n.topK,r):Math.min(64,r),l=globalThis.__BONSAI_GPU_TOPK===!0;if(!u&&l){const _=await vr(e,t,r,Math.max(d,1));if(_&&_.ids.length){const T=s?performance.now():0;s&&(me.readbackMs+=T-a,me.calls++);const D=ti(_.ids,_.vals,d,o,n,i);return s&&(me.selectMs+=performance.now()-T),D}}const c=await Re(e,t,r),m=s?performance.now():0;s&&(me.readbackMs+=m-a,me.calls++);const p=_=>(s&&(me.selectMs+=performance.now()-m),_),f=n.repetitionPenalty??1;if(f!==1&&n.recentIds?.length)for(const _ of new Set(n.recentIds)){if(_<0||_>=r)continue;const T=c[_];c[_]=T>0?T/f:T*f}if(o<=0){let _=0,T=-1/0;for(let D=0;D<r;D++)c[D]>T&&(T=c[D],_=D);return p(_)}const g=n.topK&&n.topK>0?Math.min(n.topK,r):Math.min(64,r),h=[];let b=-1/0;for(let _=0;_<r;_++){const T=c[_];if(h.length===g&&T<=b)continue;let D=h.length;for(;D>0&&c[h[D-1]]<T;)D--;h.splice(D,0,_),h.length>g&&h.pop(),b=c[h[h.length-1]]}const S=c[h[0]],v=new Float64Array(h.length);let x=0;for(let _=0;_<h.length;_++){const T=Math.exp((c[h[_]]-S)/o);v[_]=T,x+=T}if(!(x>0)||!Number.isFinite(x))return p(h[0]);let E=h.length;const y=n.topP??1;if(y>0&&y<1){let _=0;for(let T=0;T<h.length;T++)if(_+=v[T]/x,_>=y){E=T+1;break}}let P=0;for(let _=0;_<E;_++)P+=v[_];let F=i()*P;for(let _=0;_<E;_++)if(F-=v[_],F<=0)return p(h[_]);return p(h[E-1])}async function ri(e,t,r,n=0){const o=H(e.device,4,"argmax"),i=H(e.device,4,"maxval"),s=z(e.device,[{u32:r},{f32:n},{u32:0},{u32:0}]),a=e.pipelines.get("sampling");W(e.device,a,M(e.device,a,[t,o,i,s]),1,1);const u=await Se(e.device,o,4);return new Uint32Array(u)[0]}async function vr(e,t,r,n){const{chooseThreshold:o,LOGIT_HIST_BINS:i,LOGIT_RANGE_LO:s,LOGIT_RANGE_HI:a,TOPK_GATHER_CAPACITY:u}=await Promise.resolve().then(()=>(Vo(),ur)),d=i,l=u,c=H(e.device,d*4,"topk_hist"),m=H(e.device,l*4,"topk_idx"),p=H(e.device,l*4,"topk_val"),f=H(e.device,4,"topk_count"),g=T=>z(e.device,[{u32:r},{u32:d},{f32:s},{f32:a},{f32:T},{u32:l},{u32:0},{u32:0}]),h=e.pipelines.get("logit_topk","hist_main"),b=g(0);W(e.device,h,M(e.device,h,[t,c,m,p,f,b]),Math.min(r,65536),256);const S=await Se(e.device,c,d*4),v=o(new Uint32Array(S),s,a,n,l);if(v.overflow)return null;const x=e.pipelines.get("logit_topk","gather_main"),E=g(v.threshold);W(e.device,x,M(e.device,x,[t,c,m,p,f,E]),Math.min(r,65536),256);const y=await Se(e.device,f,4),P=new Uint32Array(y)[0];if(P===0||P>l)return null;const F=await Se(e.device,m,P*4),_=await Se(e.device,p,P*4);return{ids:new Uint32Array(F),vals:new Float32Array(_)}}async function Re(e,t,r){const n=await Se(e.device,t,r*tt);return new Float32Array(n)}async function oi(e,t,r,n){const o=await Re(e,t,Math.min(r,8192));let i=0,s=1/0,a=-1/0,u=0;for(let l=0;l<o.length;l++){const c=o[l];Number.isFinite(c)?(c<s&&(s=c),c>a&&(a=c),u+=Math.abs(c)):i++}const d=`${n}[bad=${i} min=${s.toExponential(1)} max=${a.toExponential(1)} mean=${(u/o.length).toExponential(1)}]`;return console.log(`[bonsai] ${d}`),d}var tt,xt,kr,Pt,Ot,me,De=A({m26(){"use strict";Ee(),Oe(),tt=4,xt=32,kr=36,Pt=new WeakMap,Ot=new WeakMap,me={readbackMs:0,selectMs:0,calls:0}}}),yr={};re(yr,{runFullAttnBlock:()=>ii});async function ii(e,t,r){const{hidden:n,nTokens:o,posBase:i}=r,{device:s,pipelines:a,weights:u,config:d,kv:l,kvMode:c}=e,m=d.layerKinds[t],p=m!=="dense-attn",f=Er(m,t,d.ffnNormNames?.[t]),[g,h,b,S,v,x,E,y,P,F,_]=f,{headCount:T,headCountKv:D,embeddingLength:B,keyLength:$e,ropeDimensionCount:Ie,ropeFreqBase:fe,rmsEps:oe}=d,N=T,R=D,k=$e??B/T,ge=1/Math.sqrt(k),Y=Ie??k;await u.ensureLayer(t);const be=u.get(g),X=u.get(h),Le=u.get(b),Ae=u.get(S),Me=u.get(v),Te=u.get(x),xe=u.get(E),_e=u.get(y),we=u.get(P),ie=u.get(F),ee=u.get(_),V=w(e,o*B,"h1_attn");Z(e,n,be,V,o,B,oe);const Q=w(e,o*N*k,"tempQ"),se=w(e,o*R*k,"tempK"),ue=w(e,o*R*k,"tempV"),te=p?w(e,o*N*k,"tempG"):null;if(C(e,V,Le,se,o,B,R*k),C(e,V,Ae,ue,o,B,R*k),p){const L=w(e,o*N*k*2,"tempQG");C(e,V,X,L,o,B,N*k*2);const K=Ue(s),q=N*k*2,de=N*k;for(let he=0;he<o;he++)for(let He=0;He<N;He++){const Gt=(he*q+He*k*2)*4,$t=(he*de+He*k)*4;K.enc.copyBufferToBuffer(L,Gt,Q,$t,k*4),K.enc.copyBufferToBuffer(L,Gt+k*4,te,$t,k*4)}Ke(s,K)}else C(e,V,X,Q,o,B,N*k);const J=w(e,o*N*k,"tempQn"),ne=w(e,o*R*k,"tempKn");Z(e,Q,Me,J,o*N,k,oe),Z(e,se,Te,ne,o*R,k,oe),Et(e,J,o,N,k,Y,i,fe),Et(e,ne,o,R,k,Y,i,fe);const $=w(e,o*N*k,"attn_out");if(c==="4bit"){l.append(t,ne,ue,o,i);const L=l.layer(t);Lt(e,J,L.k,L.v,$,o,N,R,k,i,ge,L.kScale,L.vScale)}else{l.append(t,ne,ue,o,0,0);const{k:L,v:K}=l.layer(t);Lt(e,J,L,K,$,o,N,R,k,i,ge)}p&&gr(e,$,te,o*N*k);const le=w(e,o*B,"attn_out_proj");C(e,$,xe,le,o,N*k,B),je(e,n,le,o*B);const G=w(e,o*B,"h2_ffn");Z(e,n,_e,G,o,B,oe);const ce=w(e,o*d.feedForwardLength,"ffn_gate"),U=w(e,o*d.feedForwardLength,"ffn_up");C(e,G,we,ce,o,B,d.feedForwardLength),C(e,G,ie,U,o,B,d.feedForwardLength);const j=w(e,o*d.feedForwardLength,"ffn_gated_up");At(e,ce,U,j,o*d.feedForwardLength);const O=w(e,o*B,"ffn_out");C(e,j,ee,O,o,d.feedForwardLength,B),je(e,n,O,o*B)}var ai=A({m27(){"use strict";Ee(),De(),qt()}}),Sr={};re(Sr,{runDeltaNetBlock:()=>si});async function si(e,t,r){const n=e.config,o=e.device,i=e.weights,s=n.deltaNet;if(!s)throw new Error(`bonsai-deltanet: layer ${t} routed to the DeltaNet path but this model has no ssm.* geometry (dense model). This is a layer-classification bug, not a bad file.`);const a=r.nTokens,u=n.embeddingLength,d=n.feedForwardLength,l=n.rmsEps,{numVHeads:c,numKHeads:m,headDim:p,qDim:f,kDim:g,vDim:h,convDim:b,convKernel:S,vPerKHead:v}=s,x=Er("linear-attn",t);if(x.length!==14)throw new Error(`block_deltanet layer ${t}: expected 14 tensor names, got ${x.length}`);const[E,y,P,F,_,T,D,B,$e,Ie,fe,oe,N,R]=x;for(const q of x)if(!i.has(q))throw new Error(`block_deltanet layer ${t}: missing tensor '${q}'. This layer is DeltaNet (linear-attn); ensure it was streamed via weights.ensureLayer(${t}).`);const k=w(e,a*u,`dn.${t}.h1`),ge=w(e,a*b,`dn.${t}.qkv`),Y=w(e,a*h,`dn.${t}.z`),be=w(e,a*f,`dn.${t}.qc`),X=w(e,a*g,`dn.${t}.kc`),Le=w(e,a*h,`dn.${t}.vc`),Ae=w(e,a*f,`dn.${t}.qn`),Me=w(e,a*g,`dn.${t}.kn`),Te=w(e,a*c,`dn.${t}.alpha`),xe=w(e,a*c,`dn.${t}.beta`),_e=w(e,a*c,`dn.${t}.g`),we=w(e,a*c,`dn.${t}.betaG`),ie=w(e,a*h,`dn.${t}.recur`),ee=w(e,a*h,`dn.${t}.normOut`),V=w(e,a*u,`dn.${t}.ssmProj`),Q=w(e,a*u,`dn.${t}.h2`),se=w(e,a*d,`dn.${t}.ffnG`),ue=w(e,a*d,`dn.${t}.ffnU`),te=w(e,a*d,`dn.${t}.ffnM`),J=w(e,a*u,`dn.${t}.ffnD`),ne=w(e,b,`dn.${t}.convBias`,{queueInit:!0});o.queue.writeBuffer(ne,0,new Float32Array(b));const $=w(e,p,`dn.${t}.l2w`,{queueInit:!0});o.queue.writeBuffer($,0,new Float32Array(p).fill(1/Math.sqrt(p)));const le=1e-6/p;Z(e,r.hidden,i.get(E),k,a,u,l),C(e,k,i.get(y),ge,a,u,b),C(e,k,i.get(P),Y,a,u,h);const G=S-1,ce=e.ssm.generation??0;let U=Bt.get(e.ssm);U||(U={gen:ce,bufs:new Map,zeroed:new Set},Bt.set(e.ssm,U)),U.gen!==ce&&(U.gen=ce,U.zeroed.clear());let j=U.bufs.get(t);j?U.zeroed.has(t)||(o.queue.writeBuffer(j,0,new Float32Array(G*b)),U.zeroed.add(t)):(j=qe(o,G*b,`dn.${t}.convHist`),U.bufs.set(t,j),o.queue.writeBuffer(j,0,new Float32Array(G*b)),U.zeroed.add(t));const O=w(e,(a+G)*b,`dn.${t}.convIn`),L=w(e,(a+G)*b,`dn.${t}.convOutF`);{const q=Ue(o);q.enc.copyBufferToBuffer(j,0,O,0,G*b*4),q.enc.copyBufferToBuffer(ge,0,O,G*b*4,a*b*4),q.enc.copyBufferToBuffer(O,a*b*4,j,0,G*b*4),Ke(o,q)}mr(e,O,i.get(F),ne,L,a+G,b,S),Tt(e,L,(a+G)*b);{const q=Ue(o);for(let de=0;de<a;de++){const he=(de+G)*b*4;q.enc.copyBufferToBuffer(L,he,be,de*f*4,f*4),q.enc.copyBufferToBuffer(L,he+f*4,X,de*g*4,g*4),q.enc.copyBufferToBuffer(L,he+(f+g)*4,Le,de*h*4,h*4)}Ke(o,q)}Z(e,be,$,Ae,a*m,p,le),Z(e,X,$,Me,a*m,p,le),C(e,k,i.get(T),Te,a,u,c),C(e,k,i.get(_),xe,a,u,c),br(e,Te,xe,i.get(D),i.get(B),_e,we,a,c);const K=e.ssm.state(t);_r(e,Ae,Me,Le,_e,we,K,ie,a,c,m,p,v),Z(e,ie,i.get($e),ee,a*c,p,l),Tt(e,Y,a*h),wr(e,ee,Y,ee,a*h,1),C(e,ee,i.get(Ie),V,a,h,u),je(e,r.hidden,V,a*u),Z(e,r.hidden,i.get(fe),Q,a,u,l),C(e,Q,i.get(oe),se,a,u,d),C(e,Q,i.get(N),ue,a,u,d),At(e,se,ue,te,a*d),C(e,te,i.get(R),J,a,d,u),je(e,r.hidden,J,a*u)}var Bt,ui=A({m28(){"use strict";De(),Ee(),qt(),Bt=new WeakMap}});function Er(e,t,r){const n=`blk.${t}.`;return e==="full-attn"||e==="dense-attn"?[`${n}attn_norm.weight`,`${n}attn_q.weight`,`${n}attn_k.weight`,`${n}attn_v.weight`,`${n}attn_q_norm.weight`,`${n}attn_k_norm.weight`,`${n}attn_output.weight`,r??`${n}post_attention_norm.weight`,`${n}ffn_gate.weight`,`${n}ffn_up.weight`,`${n}ffn_down.weight`]:[`${n}attn_norm.weight`,`${n}attn_qkv.weight`,`${n}attn_gate.weight`,`${n}ssm_conv1d.weight`,`${n}ssm_beta.weight`,`${n}ssm_alpha.weight`,`${n}ssm_a`,`${n}ssm_dt.bias`,`${n}ssm_norm.weight`,`${n}ssm_out.weight`,`${n}post_attention_norm.weight`,`${n}ffn_gate.weight`,`${n}ffn_up.weight`,`${n}ffn_down.weight`]}async function Lr(e,t,r){const n=e.config.layerKinds[t];if(await e.weights.ensureLayer(t),n==="full-attn"||n==="dense-attn"){const{runFullAttnBlock:o}=await Promise.resolve().then(()=>(ai(),yr));await o(e,t,r)}else if(n==="linear-attn"){const{runDeltaNetBlock:o}=await Promise.resolve().then(()=>(ui(),Sr));await o(e,t,r)}else throw new Error(`runBlock: unknown layer kind '${n}' at layer ${t}`)}var qt=A({m29(){"use strict"}}),Ar={};re(Ar,{embedTokens:()=>Tr,projectLogits:()=>Nt});async function Tr(e,t,r,n,o){const i="token_embd.weight";if(!n.has(i))throw new Error(`bonsai-embed: token embedding table '${i}' not loaded; call weights.loadGlobals(['${i}']) first`);const s=n.get(i),a=t.length;if(o%ye!==0)throw new Error(`bonsai-embed: embeddingLength ${o} not a multiple of QK1_0 (${ye})`);const u=n.typeOf(i),d=u===42;if(!d&&u!==41)throw new Error(`bonsai-embed: '${i}' has unsupported quant type ${u} (supported: Q1_0=41, Q2_0=42)`);const l=d?36:20,c=o/ye,m=c*l,p=new Float32Array(a*o),f=H(e.device,m,"embed_staging");for(let g=0;g<a;g++){const h=t[g];if(!Number.isInteger(h)||h<0)throw new Error(`bonsai-embed: token ID ${h} at position ${g} is invalid (must be non-negative integer)`);const b=h*m,S=e.device.createCommandEncoder();S.copyBufferToBuffer(s,b,f,0,m),e.device.queue.submit([S.finish()]);const v=await Se(e.device,f,m),x=new Uint8Array(v);for(let E=0;E<c;E++){const y=E*l,P=d?Lo(So(x,y)):yo(vo(x,y)),F=g*o+E*ye;p.set(P,F)}}e.device.queue.writeBuffer(r,0,p),f.destroy()}async function Nt(e,t,r,n,o,i){const s="output_norm.weight";if(!n.has(s))throw new Error(`bonsai-lmhead: output norm '${s}' not loaded; call weights.loadGlobals(['${s}']) first`);const a=n.get(s),u=o.embeddingLength,d=o.rmsEps,l=qe(e.device,u,"last_row");{const b=e.device.createCommandEncoder();b.copyBufferToBuffer(t,r*u*4,l,0,u*4),e.device.queue.submit([b.finish()])}const c=qe(e.device,u,"normed_hidden");Z(e,l,a,c,1,u,d);{const{BONSAI_DEBUG:b}=await Promise.resolve().then(()=>(qr(),Rt));if(b){const{readbackF32:S}=await Promise.resolve().then(()=>(De(),vt)),v=await S(e,c,u);let x=0,E=1/0,y=-1/0;for(const P of v)P<E&&(E=P),P>y&&(y=P),x+=Math.abs(P);console.log(`[bonsai] normedHidden: min=${E.toFixed(3)} max=${y.toFixed(3)} meanabs=${(x/v.length).toFixed(4)}`),console.log("[bonsai] NH_DUMP "+JSON.stringify(Array.from(v)))}}const m="output.weight",f=!n.has(m)?"token_embd.weight":m;if(!n.has(f))throw new Error(`bonsai-lmhead: LM head weights '${f}' not loaded; call weights.loadGlobals(['${f}']) first`);const g=n.get(f),h=qe(e.device,i,"logits");return pr(e,c,g,h,1,u,i,n.typeOf(f)),l.destroy(),c.destroy(),h}var xr=A({m30(){"use strict";Ee(),De(),wn(),Oe()}}),Rt={};re(Rt,{BONSAI_DEBUG:()=>Br,bonsaiDebugEnabled:()=>Ge,captureRow:()=>Dt,decodeStep:()=>ci,prefill:()=>li});function Ge(){return globalThis.__BONSAI_DEBUG===!0}function Dt(e,t){const r=globalThis,n=r.__BONSAI_CAPTURE_TAG;n&&((r.__BONSAI_ROWS??(r.__BONSAI_ROWS={}))[`${n}:${e}`]=t.slice())}function Pr(){return typeof globalThis.__BONSAI_CAPTURE_TAG=="string"}async function li(e,t,r,n,o,i=0){await Tr(e,r,t,e.weights,e.config.embeddingLength);const s=e.config.embeddingLength,a=(r.length-1)*s,u=async(p,f)=>{if(!Ge()&&!Pr())return;const g=await Re(e,t,r.length*s),h=g.subarray(a,a+s);if(f!==void 0){const E=globalThis.__BONSAI_CAPTURE_POS,y=typeof E=="number"&&E>=0&&E<r.length?E*s:a;Dt(f,g.subarray(y,y+s))}if(!Ge())return;let b=0,S=1/0,v=-1/0,x=0;for(let E=0;E<h.length;E++){const y=h[E];Number.isFinite(y)?(y<S&&(S=y),y>v&&(v=y),x+=Math.abs(y)):b++}console.log(`[bonsai] ${p}: bad=${b} min=${S.toFixed(3)} max=${v.toFixed(3)} meanabs=${(x/h.length).toFixed(4)}`)};await(async(p,f)=>{if(!Ge())return;const g=await Re(e,t,r.length*s);for(const h of f){const b=g.subarray(h*s,(h+1)*s);let S=0,v=1/0,x=-1/0;for(let E=0;E<b.length;E++){const y=b[E];y<v&&(v=y),y>x&&(x=y),S+=Math.abs(y)}console.log(`[bonsai] ${p} pos${h} (id ${r[h]}): min=${v.toFixed(4)} max=${x.toFixed(4)} meanabs=${(S/b.length).toFixed(5)}`)}})("embed-row",[0,1,2,r.length-1]),await u("after embed");const l={hidden:t,nTokens:r.length,posBase:i};for(let p=0;p<e.config.blockCount;p++){for(let g=1;g<=Or;g++)p+g<e.config.blockCount&&e.weights.prefetchLayer(p+g);await e.weights.ensureLayer(p),o?.(p,e.config.blockCount),Sn(e.device);try{await Lr(e,p,l)}finally{lt(e.device),Tn(e.device)}const f=e.config.layerKinds[p];await u(`after L${p} (${f})`,p)}e.kv.advance(r.length);const c=r.length-1;return{logits:await Nt(e,t,c,e.weights,e.config,n.vocabSize)}}async function ci(e,t,r,n){const o={hidden:t,nTokens:1,posBase:r},i=async a=>{if(!Ge()&&!Pr())return;const u=await Re(e,t,e.config.embeddingLength);if(Dt(a,u),!Ge())return;let d=0,l=1/0,c=-1/0,m=0;for(let p=0;p<u.length;p++){const f=u[p];Number.isFinite(f)?(f<l&&(l=f),f>c&&(c=f),m+=Math.abs(f)):d++}console.log(`[bonsai] DECODE_L${a}: bad=${d} min=${l.toFixed(3)} max=${c.toFixed(3)} meanabs=${(m/u.length).toFixed(4)}`)};for(let a=0;a<e.config.blockCount;a++){await e.weights.ensureLayer(a),Sn(e.device);try{await Lr(e,a,o)}finally{lt(e.device),Tn(e.device)}await i(a);const u=globalThis.__BONSAI_INJECT;u&&u.layer===a&&u.row.length===e.config.embeddingLength&&(e.device.queue.writeBuffer(t,0,u.row),console.log(`[bonsai] INJECT applied at L${a} (decode hidden <- prefill row)`))}return e.kv.advance(1),{logits:await Nt(e,t,0,e.weights,e.config,n.vocabSize)}}var Or,Br,qr=A({m31(){"use strict";qt(),xr(),De(),Ee(),Or=3,Br=!1}}),Nr={};re(Nr,{initBonsaiRuntime:()=>di});async function di(e){let t=null,r="",n=!1;const o=d=>e.postMessage(d);async function i(){const{WGSL_SOURCES:d}=await Promise.resolve().then(()=>(jo(),Gn));return d}async function s(){const d=navigator.gpu;if(!d)throw new Error("WebGPU not available on this browser");let l=await d.requestAdapter({powerPreference:"high-performance"});if(l||(l=await d.requestAdapter({forceFallbackAdapter:!0}).catch(()=>null)),!l)throw new Error("No WebGPU adapter found");const c=l.limits??{},m={};for(const h of["maxStorageBufferBindingSize","maxBufferSize","maxComputeWorkgroupStorageSize"]){const b=c[h];typeof b=="number"&&b>0&&(m[h]=b)}const p=await l.requestDevice({requiredLimits:m}),f=Be(),g=qo(Bo(l.info),{windowsTdr:typeof navigator<"u"&&/Windows/i.test(navigator.userAgent??""),mobile:f});return g>0&&Ro(p,g),p}async function a(d){try{const l=await s(),c=await i();t=_o({device:l,kernelSources:c}),r=d,await t.load({modelUrl:Nn(d),onProgress:m=>o({type:"progress",progress:m.percent,file:m.detail})}),o({type:"ready",modelId:d})}catch(l){o({type:"error",message:`bonsai load failed: ${l.message}`})}}async function u(d){if(!t?.loaded)return o({type:"error",message:"no model loaded \u2014 send {type:'load'} first"});n=!1;try{const{tokenizer:l,config:c,device:m,pipelines:p,weights:f}=t.loaded,g=d.maxTokens??256,h=d.temperature??.7,b=d.topK??20,S=d.topP??.95,v=d.repetitionPenalty??1.1,E=d.reasoningBudget??Math.max(32,g-128),y=l.encodeChat(d.messages),P=y.length,F=8192,_=Math.min(F,P+g+1);if(P+g+1>F)return o({type:"error",message:`context too long: prompt ${P} + maxTokens ${g} > ${F} KV slots. Shorten the prompt or lower maxTokens.`});const{F32KvCache:T}=await Promise.resolve().then(()=>(Ho(),or)),{SsmState:D}=await Promise.resolve().then(()=>(Yo(),ar)),{f32Buffer:B,sampleToken:$e}=await Promise.resolve().then(()=>(De(),vt)),{prefill:Ie,decodeStep:fe}=await Promise.resolve().then(()=>(qr(),Rt)),{embedTokens:oe}=await Promise.resolve().then(()=>(xr(),Ar)),N=new T(m,{fullAttnLayers:c.fullAttnLayers,headCountKv:c.headCountKv,headDim:c.keyLength??c.embeddingLength/c.headCount,capacity:F}),R=c.deltaNet,k=new D(m,{linearAttnLayers:c.linearAttnLayers,heads:R?.numVHeads??0,dK:R?.headDim??0,dV:R?.headDim??0,dConv:R?.convKernel,ssmInnerSize:R?.vDim,convDim:R?.convDim});if(!R&&c.linearAttnLayers.length>0)throw new Error(`bonsai: ${c.linearAttnLayers.length} DeltaNet layers classified but model exposes no ssm.* geometry.`);N.reset(),k.reset();const ge=B(m,P*c.embeddingLength,"hidden_prefill"),Y=B(m,c.embeddingLength,"hidden_decode"),be=f.weightQuantType(),X={device:m,pipelines:p,weights:f,config:c,kv:N,kvMode:"f32",ssm:k,quantType:be};o({type:"progress",progress:10,file:`prefill ${P} tokens`});const Le=Date.now(),Ae=await Ie(X,ge,y,l,(O,L)=>{o({type:"progress",progress:10+Math.floor(O/L*30),file:`layer ${O+1}/${L}`})}),Me=Date.now()-Le,Te="\uFFFD",xe=O=>{const L=l.decode(O);let K=L.length;for(;K>0&&L[K-1]===Te;)K--;return L.slice(0,K)},_e=[],we=[];let ie="",ee="";const V=(O,L,K)=>{const q=xe(O);return q.length>L.length&&q.startsWith(L)?(o({type:"token",text:q.slice(L.length),channel:K}),q):q.length>=L.length?q:L};let Q=!1;if(l.thinkEndId!==void 0&&l.thinkStartId!==void 0){const O=y.lastIndexOf(l.thinkStartId),L=y.lastIndexOf(l.thinkEndId);Q=O!==-1&&O>L}let se=!1;const ue=64,te=[];let J=Ae.logits,ne=P,$=0,le="max-tokens";const G=Date.now();for(;$<g&&!n;){const O=await $e({device:m,pipelines:p,quantType:be},J,l.vocabSize,{temperature:h,topK:b,topP:S,repetitionPenalty:v,recentIds:te});if($++,l.isStop(O)){le="stop-token";break}te.push(O),te.length>ue&&te.shift(),O===l.thinkEndId?Q=!1:O===l.thinkStartId?Q=!0:Q?(_e.push(O),ie=V(_e,ie,"thinking")):(we.push(O),ee=V(we,ee,"answer")),await oe(X,[O],Y,f,c.embeddingLength),J=(await fe(X,Y,ne++,l)).logits,Q&&!se&&l.thinkEndId!==void 0&&$>=E&&(se=!0,Q=!1,await oe(X,[l.thinkEndId],Y,f,c.embeddingLength),J=(await fe(X,Y,ne++,l)).logits,o({type:"progress",file:"reasoning budget reached \u2014 answering"}));const L=10+Math.floor($/g*80),K=$/((Date.now()-G)/1e3);o({type:"progress",progress:L,file:`${Q?"thinking":"answering"} \xB7 ${$} tok \xB7 ${K.toFixed(1)} tok/s`})}n&&(le="interrupted");const ce=Date.now()-G,U=$>0?$/ce*1e3:0,j=ee.trim()||(ie.trim()?"I ran out of room to finish that thought \u2014 my reasoning is above. Ask again and I'll be more direct.":"");o({type:"done",text:j,reasoning:ie.trim()||void 0,tokensPerSecond:U})}catch(l){o({type:"error",message:`bonsai generate failed: ${l.message}`})}}return{load:a,generate:u,interrupt:()=>{n=!0}}}var hi=A({m32(){"use strict";Oo(),No(),Ee(),bt(),Dn()}}),pi=[{id:"bonsai-1.7b",label:"Bonsai 1.7B (Phone)",repo:"prism-ml/Bonsai-1.7B-gguf",runtime:"bonsai-kernels",task:"text-generation",approxDownloadMB:236,blurb:"Lightest size \u2014 236 MB, designed for phones and older devices.",ready:!0},{id:"bonsai-4b",label:"Bonsai 4B (Default)",repo:"prism-ml/Bonsai-4B-gguf",runtime:"bonsai-kernels",task:"text-generation",approxDownloadMB:545,blurb:"Balanced: smart and fast \u2014 the recommended in-browser model.",ready:!0},{id:"bonsai-8b",label:"Bonsai 8B (Desktop)",repo:"prism-ml/Bonsai-8B-gguf",runtime:"bonsai-kernels",task:"text-generation",approxDownloadMB:1104,blurb:"Better reasoning, ~1 GB. Desktop GPU with 8+ GB RAM.",ready:!0},{id:"bonsai-27b-text",label:"Bonsai 27B (Reasoning)",repo:"prism-ml/Bonsai-27B-gguf",runtime:"bonsai-kernels",task:"text-generation",approxDownloadMB:3800,blurb:"Full reasoning brain. 3.6 GB, needs a real desktop GPU (e.g., RTX 4090).",ready:!0},{id:"gemma-4-e2b",label:"Gemma 4 (E2B, mobile)",repo:"google/gemma-4-E2B-it-qat-mobile-transformers",runtime:"transformers-js",task:"text-generation",dtype:"q4",approxDownloadMB:900,blurb:"Google's QAT mobile Gemma 4 \u2014 needs its own WebGPU kernels (coming).",ready:!1},{id:"bonsai-image",label:"Bonsai Image",repo:"prism-ml/Bonsai-27B-gguf",runtime:"bonsai-image",task:"text-to-image",approxDownloadMB:3800,blurb:"In-browser image generation via custom WebGPU kernels (Phase 4 \u2014 not yet wired).",ready:!1}];function Rr(e){return pi.find(t=>t.id===e)}function mi(e,t){let r=null;async function n(o){const i=Rr(o);if(!i){e.postMessage({type:"error",message:`unknown model '${o}'`});return}if(i.runtime==="transformers-js"){const s=await fi(e,t);r=s,s({type:"load",modelId:o})}else if(i.runtime==="bonsai-kernels"){const s=await gi(e);r=s,s({type:"load",modelId:o})}else e.postMessage({type:"error",message:`model '${o}' uses the '${i.runtime}' runtime, not wired in this worker yet`})}e.addEventListener("message",o=>{const i=o.data;r?r(i):i.type==="load"&&n(i.modelId).catch(s=>{e.postMessage({type:"error",message:"runtime failed to start: "+(s instanceof Error?s.message:String(s))})})})}async function fi(e,t){let r=null,n=!1;const o=a=>e.postMessage(a);async function i(a){const u=Rr(a);if(!u)return o({type:"error",message:`unknown model '${a}'`});try{const{pipeline:d}=await t.loadTransformers();r=await d(u.task,u.repo,{device:"webgpu",dtype:u.dtype??"q4",progress_callback:l=>{l&&l.status==="progress"&&o({...l,type:"progress"})}}),o({type:"ready",modelId:a})}catch(d){o({type:"error",message:`load failed: ${d.message}`})}}async function s(a){if(!r)return o({type:"error",message:"no model loaded \u2014 send {type:'load'} first"});n=!1;try{const{TextStreamer:u}=await t.loadTransformers(),d=r;let l=0;const c=performance.now(),m=new u(d.tokenizer,{skip_prompt:!0,skip_special_tokens:!0,callback_function:b=>{n||(l+=1,o({type:"token",text:b}))}}),p=await d(a.messages,{max_new_tokens:a.maxTokens??512,do_sample:(a.temperature??0)>0,temperature:a.temperature??1,streamer:m}),f=(performance.now()-c)/1e3,g=p?.[0]?.generated_text,h=Array.isArray(g)&&g.length?String(g[g.length-1]?.content??""):String(g??"");o({type:"done",text:h,tokensPerSecond:f>0?l/f:void 0})}catch(u){o({type:"error",message:`generate failed: ${u.message}`})}}return a=>{a.type==="load"?i(a.modelId):a.type==="generate"?s(a):a.type==="interrupt"&&(n=!0)}}async function gi(e){const{initBonsaiRuntime:t}=await Promise.resolve().then(()=>(hi(),Nr)),r=await t(e);return n=>{n.type==="load"?r.load(n.modelId):n.type==="generate"?r.generate(n):n.type==="interrupt"&&r.interrupt()}}Dn();var bi=3;function _i(e){let t=`You may call functions to help answer the user.
+
+`;t+=`You are provided with function signatures within <tools></tools> XML tags:
+`,t+="<tools>";for(const r of e)t+=`
+`+JSON.stringify(r);return t+=`
+</tools>
+
+`,t+="For each function call, return a json object with function name and ",t+=`arguments within <tool_call></tool_call> XML tags:
+`,t+=`<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>`,t}function wi(e){const t=[];let r=e;const n=[/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g,/<tool_call>\s*(\{[\s\S]*\})\s*$/g];for(const o of n)if(r=r.replace(o,(i,s)=>{const a=vi(s);return a?(t.push({...a,raw:i}),""):i}),t.length)break;return{calls:t,rest:r.trim()}}function vi(e){const t=[e,e.replace(/,\s*([}\]])/g,"$1"),e.replace(/'/g,'"').replace(/,\s*([}\]])/g,"$1")];for(const r of t)try{const n=JSON.parse(r),o=n?.name;if(typeof o=="string"&&o){const i=n.arguments??n.parameters??{};return{name:o,arguments:typeof i=="object"&&i?i:{}}}}catch{}return null}bt();var ki=new URL("./bonsai-worker-entry.js?v=2",import.meta.url).href;function yi(e){const t=e?.entryUrl??ki,r=new Worker(t,{type:"module"}),n=new Set,o=i=>{for(const s of n)s({type:"error",message:i})};return r.addEventListener("message",i=>{const s=i.data;for(const a of n)a(s)}),r.addEventListener("error",i=>{o("on-device worker failed to start: "+(i&&i.message||"module load error"))}),r.addEventListener("messageerror",()=>{o("on-device worker rejected a message (protocol mismatch)")}),{post:i=>r.postMessage(i),on:i=>{n.add(i)},interrupt:()=>r.postMessage({type:"interrupt"}),dispose:()=>r.terminate()}}export{wt as BONSAI_MODELS_INFO,ze as DEFAULT_BONSAI_MODEL_ID,Pn as FIRST_TOKEN_FAIL_MS,On as LOAD_FAIL_MS,bi as MAX_TOOL_ROUNDS,Ko as autoBootAllowed,xn as classifyAdapter,yi as createBonsaiChatWorker,_t as getBonsaiModel,Uo as gpuLaneAllowed,Be as isMobileDevice,wi as parseToolCalls,zo as pickBonsaiContext,_i as renderToolsSystemBlock,Nn as resolveBonsaiUrl,mi as runWebMLWorker,Qo as suggestBonsaiModelId};
