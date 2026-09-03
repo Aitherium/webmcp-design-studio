@@ -13,8 +13,8 @@ browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
 WebMCP's promise is that a website *declares* what agents can do instead of forcing
 agents to guess. The studio is built entirely around that declaration: every capability
-of the design tool is registered on `document.modelContext.registerTool()` — **32 tools**
-covering the whole creative loop across fourteen families:
+of the design tool is registered on `document.modelContext.registerTool()` — **33 tools**
+covering the whole creative loop across fifteen families:
 
 - **Designs**: `create-design`, `duplicate-design`, `list-designs`, `get-design-state`
 - **Elements**: `add-text`, `edit-element`, `remove-element`
@@ -27,6 +27,11 @@ covering the whole creative loop across fourteen families:
   the platform's render lane (Remotion + TTS). Renders are queued on awrun, the
   platform's priority queue, so many designs render in parallel on burst workers and
   the agent polls for the URL instead of waiting on a request.
+- **IRIS agent mode**: `iris-produce` — one compound tool that runs the platform's Visual
+  Artisan end to end: enhance the brief → generate → critique (vision score) → refine when
+  the score is under the bar → place. Every step lands in the protocol feed as a STEP with
+  its elapsed time, and when a refinement ran, v1 and v2 sit side by side on the canvas
+  with their scores, so the human sees what the agent decided and why.
 - **Media pipeline (ComfyUI behind MediaForge)**: `mediaforge-upscale`, `-enhance`,
   `-restyle` (preset catalog read live), `-relight`, `-outpaint`, `-critique` (read-only
   design critique), `-storyboard` (plans, then renders one shot per request), `-animate`
