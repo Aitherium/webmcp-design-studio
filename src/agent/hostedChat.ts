@@ -56,6 +56,16 @@ const HOSTED_FALLBACK_BASE =
 const HOSTED_FALLBACK_MODEL = 'aither-orchestrator-8b';
 
 export interface OpenAICompatibleWorkerOptions {
+  /** Ask a reasoning model to answer directly instead of thinking first.
+   * Measured 2026-09-02 on the fleet 27B with a tool-shaped turn:
+   *   thinking ON, 2048 tokens  → 40.35 s, create-design, 1083 reasoning chars
+   *   thinking OFF, 512         →  3.99 s, create-design, args parse
+   *   thinking OFF, 2048        →  2.36 s, create-design, args parse
+   * Same tool, same valid arguments, 17x faster — so the August workaround
+   * (give every lane 2048 tokens of headroom) was paying for thinking the
+   * agent never needed. Fleet lanes only: a visitor's BYOK endpoint may be
+   * OpenAI proper, which rejects unknown body fields. */
+  disableThinking?: boolean;
   /** Base — accepts 'https://host', 'https://host/v1' or a full
    * '/chat/completions' URL; the adapter normalizes. */
   baseUrl: string;
@@ -114,6 +124,7 @@ export function createOpenAICompatibleWorker(opts: OpenAICompatibleWorkerOptions
           max_tokens: Math.max(msg.maxTokens ?? 512, 2048),
           temperature: msg.temperature ?? 0.7,
           stream: true,
+          ...(opts.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -241,8 +252,8 @@ export function createFallbackChatWorker(
  * orchestrator lane as the fallback for a turn that fails before its first token. */
 export function createHostedChatWorker(): ChatWorkerLike {
   return createFallbackChatWorker(
-    createOpenAICompatibleWorker({ baseUrl: HOSTED_BASE, model: HOSTED_MODEL }),
-    createOpenAICompatibleWorker({ baseUrl: HOSTED_FALLBACK_BASE, model: HOSTED_FALLBACK_MODEL }),
+    createOpenAICompatibleWorker({ baseUrl: HOSTED_BASE, model: HOSTED_MODEL, disableThinking: true }),
+    createOpenAICompatibleWorker({ baseUrl: HOSTED_FALLBACK_BASE, model: HOSTED_FALLBACK_MODEL, disableThinking: true }),
     (reason) => {
       // eslint-disable-next-line no-console
       console.warn(`[fleet] primary text lane failed (${reason}) — replaying on the orchestrator lane`);

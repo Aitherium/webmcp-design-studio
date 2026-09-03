@@ -5,9 +5,11 @@
  * the answer twice). Measured need: 2026-09-01, Bonsai segfaulted mid-judging
  * and a judge saw "agent failed: network error" with nothing behind it.
  */
-import { describe, expect, it } from 'vitest';
-import { createFallbackChatWorker } from '../src/agent/hostedChat';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createFallbackChatWorker, createOpenAICompatibleWorker } from '../src/agent/hostedChat';
 import type { ChatWorkerLike } from '../src/agent/loader';
+
+afterEach(() => vi.unstubAllGlobals());
 
 type Msg = Parameters<Parameters<ChatWorkerLike['on']>[0]>[0];
 
@@ -84,5 +86,32 @@ describe('createFallbackChatWorker', () => {
     w.dispose();
     expect(primary.interrupted + secondary.interrupted).toBe(2);
     expect(primary.disposed + secondary.disposed).toBe(2);
+  });
+});
+
+describe('reasoning headroom', () => {
+  it('the FLEET workers ask the model not to think — 40.35 s -> 2.36 s for the same tool call (measured 2026-09-02)', async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    }));
+    const w = createOpenAICompatibleWorker({ baseUrl: 'https://fleet/api/chat', model: 'bonsai-27b', disableThinking: true });
+    w.post({ type: 'generate', messages: [{ role: 'user', content: 'hi' }] } as never);
+    await vi.waitFor(() => expect(body.chat_template_kwargs).toEqual({ enable_thinking: false }));
+    w.dispose();
+  });
+
+  it('a BYOK worker does NOT get the kwarg (OpenAI rejects unknown fields)', async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(new ReadableStream({ start(c) { c.close(); } }), { status: 200 });
+    }));
+    const w = createOpenAICompatibleWorker({ baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' });
+    w.post({ type: 'generate', messages: [{ role: 'user', content: 'hi' }] } as never);
+    await vi.waitFor(() => expect(body.model).toBe('gpt-4o-mini'));
+    expect(body.chat_template_kwargs).toBeUndefined();
+    w.dispose();
   });
 });
