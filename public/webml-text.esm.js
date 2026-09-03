@@ -1,4 +1,4 @@
-/* webmcp-studio-runtime webmcp-studio-runtime-v1 — built 2026-08-27T16:20:00.046Z by AitherOS/dev/tools/build_webml_cdn.mjs */
+/* webmcp-studio-runtime — generated bundle */
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __esm = (fn, res) => function __init() {
@@ -7,10 +7,7 @@ var __esm = (fn, res) => function __init() {
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
-};
-
-// ../../apps/packages/awkit/src/webml/bonsai/gguf/reader.ts
-function isRetriableStatus(status) {
+};function isRetriableStatus(status) {
   return status === 408 || status === 429 || status >= 500;
 }
 function httpRangeFetcher(url) {
@@ -130,7 +127,7 @@ function mirroredRangeFetcher(urls) {
 }
 var MAX_RANGE_ATTEMPTS, sleep, RANGE_STALL_TIMEOUT_MS, RangeReader;
 var init_reader = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gguf/reader.ts"() {
+  "m0"() {
     "use strict";
     MAX_RANGE_ATTEMPTS = 3;
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -243,10 +240,7 @@ var init_reader = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts
-function openDb() {
+});function openDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
@@ -313,16 +307,13 @@ function cachedRangeFetcher(url, inner, onCached) {
 }
 var DB_NAME, STORE, DB_VERSION;
 var init_idb_cache = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gguf/idb-cache.ts"() {
+  "m1"() {
     "use strict";
     DB_NAME = "bonsai-weights";
     STORE = "ranges";
     DB_VERSION = 1;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/gguf/types.ts
-function typeTrait(t) {
+});function typeTrait(t) {
   const tr = TYPE_TRAITS[t];
   if (!tr) throw new Error(`bonsai-gguf: unsupported ggml type ${t} (not in TYPE_TRAITS)`);
   return tr;
@@ -338,7 +329,7 @@ function tensorNBytes(t, nElements) {
 }
 var TYPE_TRAITS, QK1_0, QK2_0, Q1_0_BYTES, Q2_0_BYTES;
 var init_types = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gguf/types.ts"() {
+  "m2"() {
     "use strict";
     TYPE_TRAITS = {
       [0 /* F32 */]: { blockSize: 1, typeSize: 4, name: "F32" },
@@ -352,10 +343,7 @@ var init_types = __esm({
     Q1_0_BYTES = 18;
     Q2_0_BYTES = 34;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/gguf/parser.ts
-function align(x, a) {
+});function align(x, a) {
   return x + (a - x % a) % a;
 }
 async function readScalar(r, t) {
@@ -461,17 +449,14 @@ function numberKv(kv, key, fallback) {
 }
 var GGUF_MAGIC;
 var init_parser = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gguf/parser.ts"() {
+  "m3"() {
     "use strict";
     init_types();
     GGUF_MAGIC = 1179993927;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts
-var GgufMetadata;
+});var GgufMetadata;
 var init_metadata = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gguf/metadata.ts"() {
+  "m4"() {
     "use strict";
     GgufMetadata = class {
       constructor(kv) {
@@ -581,12 +566,9 @@ var init_metadata = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/tensors/registry.ts
-var TensorRegistry;
+});var TensorRegistry;
 var init_registry = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/tensors/registry.ts"() {
+  "m5"() {
     "use strict";
     TensorRegistry = class {
       constructor(parsed) {
@@ -649,10 +631,7 @@ var init_registry = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/config.ts
-function deriveDeltaNetDims(arch) {
+});function deriveDeltaNetDims(arch) {
   const numVHeads = arch.ssmTimeStepRank ?? 0;
   const numKHeads = arch.ssmGroupCount ?? 0;
   const headDim = arch.ssmStateSize ?? 0;
@@ -801,14 +780,11 @@ function assertLayerSchedule(cfg) {
 }
 var KERNEL_MAX_HEAD_DIM;
 var init_config = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/config.ts"() {
+  "m6"() {
     "use strict";
     KERNEL_MAX_HEAD_DIM = 256;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts
-function byteToUnicode() {
+});function byteToUnicode() {
   const bs = [];
   for (let i = 33; i <= 126; i++) bs.push(i);
   for (let i = 161; i <= 172; i++) bs.push(i);
@@ -932,17 +908,14 @@ function decode(ids, t) {
 }
 var TOKEN_TYPE_CONTROL, TOKEN_TYPE_USER_DEFINED, PRETOKEN_RE, SPECIAL_RE_CACHE;
 var init_bpe = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/bpe.ts"() {
+  "m7"() {
     "use strict";
     TOKEN_TYPE_CONTROL = 3;
     TOKEN_TYPE_USER_DEFINED = 4;
     PRETOKEN_RE = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
     SPECIAL_RE_CACHE = /* @__PURE__ */ new WeakMap();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts
-function renderChatML(messages, addGenerationPrompt = true, tools) {
+});function renderChatML(messages, addGenerationPrompt = true, tools) {
   let out = "";
   if (tools && tools.length > 0) {
     out += `<|im_start|>system
@@ -1027,15 +1000,12 @@ ${m.content}
   return out;
 }
 var init_chat_template = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/chat_template.ts"() {
+  "m8"() {
     "use strict";
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts
-var BonsaiTokenizer;
+});var BonsaiTokenizer;
 var init_load = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/tokenizer/load.ts"() {
+  "m9"() {
     "use strict";
     init_bpe();
     init_chat_template();
@@ -1077,12 +1047,9 @@ var init_load = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts
-var BufferUsage, MapMode;
+});var BufferUsage, MapMode;
 var init_gpu_min = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/kernels/gpu-min.ts"() {
+  "m10"() {
     "use strict";
     BufferUsage = {
       MAP_READ: 1,
@@ -1094,10 +1061,7 @@ var init_gpu_min = __esm({
     };
     MapMode = { READ: 1, WRITE: 2 };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/tensors/upload.ts
-function needsChunking(device, nBytes) {
+});function needsChunking(device, nBytes) {
   return nBytes > device.limits.maxStorageBufferBindingSize;
 }
 async function uploadCoalescedRange(device, fetchRange, range) {
@@ -1158,7 +1122,7 @@ function alignUp(n, a) {
 }
 var WEBGPU_DEFAULT_MAX_STORAGE_BINDING, GGML_Q1_0, GGML_Q2_0, Q1_0_RAW_BYTES, Q1_0_GPU_BYTES, Q2_0_RAW_BYTES, Q2_0_GPU_BYTES;
 var init_upload = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/tensors/upload.ts"() {
+  "m11"() {
     "use strict";
     init_gpu_min();
     WEBGPU_DEFAULT_MAX_STORAGE_BINDING = 134217728;
@@ -1169,12 +1133,9 @@ var init_upload = __esm({
     Q2_0_RAW_BYTES = 34;
     Q2_0_GPU_BYTES = 36;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/weights.ts
-var WeightStore;
+});var WeightStore;
 var init_weights = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/weights.ts"() {
+  "m12"() {
     "use strict";
     init_types();
     init_upload();
@@ -1327,12 +1288,9 @@ var init_weights = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts
-var KERNEL_NAMES, PipelineCache;
+});var KERNEL_NAMES, PipelineCache;
 var init_pipelines = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/kernels/pipelines.ts"() {
+  "m13"() {
     "use strict";
     KERNEL_NAMES = [
       "quantize_q8_0",
@@ -1410,15 +1368,12 @@ var init_pipelines = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/runtime.ts
-function createBonsaiRuntime(deps) {
+});function createBonsaiRuntime(deps) {
   return new BonsaiRuntime(deps);
 }
 var BonsaiRuntime;
 var init_runtime = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/runtime.ts"() {
+  "m14"() {
     "use strict";
     init_reader();
     init_idb_cache();
@@ -1494,10 +1449,7 @@ var init_runtime = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/kernels/reference.ts
-function f16ToF32(h) {
+});function f16ToF32(h) {
   const s = (h & 32768) >> 15;
   const e = (h & 31744) >> 10;
   const f = h & 1023;
@@ -1544,18 +1496,15 @@ function dequantQ2Block(block) {
 }
 var _f32, _u32;
 var init_reference = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/kernels/reference.ts"() {
+  "m15"() {
     "use strict";
     init_types();
     _f32 = new Float32Array(1);
     _u32 = new Uint32Array(_f32.buffer);
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/provenance.ts
-var PROVENANCE_MARKER, PROVENANCE_HEADER_TS, PROVENANCE_HEADER_WGSL;
+});var PROVENANCE_MARKER, PROVENANCE_HEADER_TS, PROVENANCE_HEADER_WGSL;
 var init_provenance = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/provenance.ts"() {
+  "m16"() {
     "use strict";
     PROVENANCE_MARKER = "Numerics ported from owner-owned fork";
     PROVENANCE_HEADER_TS = `/* SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
@@ -1569,11 +1518,8 @@ var init_provenance = __esm({
 // ${PROVENANCE_MARKER}: github.com/PrismML-Eng/llama.cpp @ branch "prism"
 // NO third-party WebGPU kernel source was consulted (HF Spaces bonsai-* excluded).`;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/index.ts
-var init_bonsai = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/index.ts"() {
+});var init_bonsai = __esm({
+  "m17"() {
     "use strict";
     init_runtime();
     init_reader();
@@ -1588,10 +1534,7 @@ var init_bonsai = __esm({
     init_chat_template();
     init_provenance();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/gpu-class.ts
-function classifyAdapter(hint) {
+});function classifyAdapter(hint) {
   if (hint?.isFallbackAdapter === true) return "software";
   const vendor = hint?.vendor?.trim().toLowerCase();
   if (!vendor) return "unknown";
@@ -1616,15 +1559,12 @@ function maxDispatchesPerSubmit(cls, opts) {
 }
 var INTEGRATED_VENDORS, SOFTWARE_VENDORS;
 var init_gpu_class = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/gpu-class.ts"() {
+  "m18"() {
     "use strict";
     INTEGRATED_VENDORS = ["intel", "arm", "qualcomm", "imgtec"];
     SOFTWARE_VENDORS = ["microsoft"];
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts
-function ceilDiv(a, b) {
+});function ceilDiv(a, b) {
   return Math.floor((a + b - 1) / b);
 }
 function setSubmitBudget(device, maxDispatches) {
@@ -1833,7 +1773,7 @@ function align16(n) {
 }
 var activeBatch, submitBudget, deferredDestroy, bufferPool, poolStats, POOL_KEY, STORAGE_USAGE, UNIFORM_USAGE, MAX_WORKGROUPS_PER_DIM, stagingPool;
 var init_dispatch = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/kernels/dispatch.ts"() {
+  "m19"() {
     "use strict";
     init_gpu_min();
     activeBatch = /* @__PURE__ */ new WeakMap();
@@ -1847,10 +1787,7 @@ var init_dispatch = __esm({
     MAX_WORKGROUPS_PER_DIM = 65535;
     stagingPool = /* @__PURE__ */ new WeakMap();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/device-class.ts
-function classifyAdapter2(hint) {
+});function classifyAdapter2(hint) {
   if (hint?.isFallbackAdapter === true) return "software";
   const vendor = hint?.vendor?.trim().toLowerCase();
   if (!vendor) return "unknown";
@@ -1879,17 +1816,14 @@ function autoBootAllowed(hint) {
 }
 var FIRST_TOKEN_FAIL_MS, LOAD_FAIL_MS, INTEGRATED_VENDORS2, SOFTWARE_VENDORS2;
 var init_device_class = __esm({
-  "../../apps/packages/awkit/src/webml/device-class.ts"() {
+  "m20"() {
     "use strict";
     FIRST_TOKEN_FAIL_MS = 6e4;
     LOAD_FAIL_MS = 18e4;
     INTEGRATED_VENDORS2 = ["intel", "arm", "qualcomm", "imgtec"];
     SOFTWARE_VENDORS2 = ["microsoft"];
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai-models.ts
-function getBonsaiModel(id) {
+});function getBonsaiModel(id) {
   return BONSAI_MODELS_INFO.find((m) => m.id === id);
 }
 function resolveBonsaiUrl(id) {
@@ -1920,7 +1854,7 @@ function pickBonsaiContext(model) {
 }
 var HF_PRISM, BONSAI_MIRROR, BONSAI_MODELS_INFO, DEFAULT_BONSAI_MODEL_ID;
 var init_bonsai_models = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai-models.ts"() {
+  "m21"() {
     "use strict";
     init_device_class();
     HF_PRISM = "https://huggingface.co/prism-ml";
@@ -1969,16 +1903,13 @@ var init_bonsai_models = __esm({
     ];
     DEFAULT_BONSAI_MODEL_ID = "bonsai-4b";
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts
-var wgsl_sources_exports = {};
+});var wgsl_sources_exports = {};
 __export(wgsl_sources_exports, {
   WGSL_SOURCES: () => WGSL_SOURCES
 });
 var CAUSAL_CONV1D, DELTANET, DELTANET_GATE, DELTANET_SEQ, ELEMENTWISE, ELEMENTWISE_INPLACE, KV_QUANT_4BIT, LOGIT_TOPK, Q1_0_DEQUANT, Q1_0_Q8_0_MATMUL, Q2_0_DEQUANT, Q2_0_Q8_0_MATMUL, QUANTIZE_Q8_0, RMSNORM, ROPE_IMROPE, SAMPLING, SOFTMAX_ATTN, SOFTMAX_ATTN_BATCHED, SWIGLU, VAE_OPS, WGSL_SOURCES;
 var init_wgsl_sources = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/kernels/wgsl-sources.ts"() {
+  "m22"() {
     "use strict";
     CAUSAL_CONV1D = `// SPDX-License-Identifier: LicenseRef-Aitherium-Proprietary
 // \xA9 2026 Aitherium, LLC. Original work.
@@ -3015,16 +2946,13 @@ fn main(@builtin(workgroup_id) wg_ : vec3<u32>,
       "vae_ops": VAE_OPS
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts
-var kv_f32_exports = {};
+});var kv_f32_exports = {};
 __export(kv_f32_exports, {
   F32KvCache: () => F32KvCache
 });
 var F32KvCache;
 var init_kv_f32 = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/kv_f32.ts"() {
+  "m23"() {
     "use strict";
     init_gpu_min();
     init_dispatch();
@@ -3152,16 +3080,13 @@ var init_kv_f32 = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts
-var ssm_state_exports = {};
+});var ssm_state_exports = {};
 __export(ssm_state_exports, {
   SsmState: () => SsmState
 });
 var SsmState;
 var init_ssm_state = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/ssm_state.ts"() {
+  "m24"() {
     "use strict";
     init_gpu_min();
     SsmState = class {
@@ -3222,10 +3147,7 @@ var init_ssm_state = __esm({
       }
     };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts
-var topk_threshold_exports = {};
+});var topk_threshold_exports = {};
 __export(topk_threshold_exports, {
   LOGIT_HIST_BINS: () => LOGIT_HIST_BINS,
   LOGIT_RANGE_HI: () => LOGIT_RANGE_HI,
@@ -3258,17 +3180,14 @@ function chooseThreshold(hist, lo, hi, k, capacity) {
 }
 var LOGIT_RANGE_LO, LOGIT_RANGE_HI, LOGIT_HIST_BINS, TOPK_GATHER_CAPACITY;
 var init_topk_threshold = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/topk-threshold.ts"() {
+  "m25"() {
     "use strict";
     LOGIT_RANGE_LO = -50;
     LOGIT_RANGE_HI = 50;
     LOGIT_HIST_BINS = 1024;
     TOPK_GATHER_CAPACITY = 2048;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/ops.ts
-var ops_exports = {};
+});var ops_exports = {};
 __export(ops_exports, {
   Q8_BLOCK: () => Q8_BLOCK,
   Q8_BYTES_PER_BLOCK: () => Q8_BYTES_PER_BLOCK,
@@ -3714,7 +3633,7 @@ async function dbgStats(ctx, buf, count, label) {
 }
 var F32, Q8_BLOCK, Q8_BYTES_PER_BLOCK, siluScratch, kvScaleScratch, sampleTiming;
 var init_ops = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/ops.ts"() {
+  "m26"() {
     "use strict";
     init_dispatch();
     init_types();
@@ -3725,10 +3644,7 @@ var init_ops = __esm({
     kvScaleScratch = /* @__PURE__ */ new WeakMap();
     sampleTiming = { readbackMs: 0, selectMs: 0, calls: 0 };
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts
-var block_full_attn_exports = {};
+});var block_full_attn_exports = {};
 __export(block_full_attn_exports, {
   runFullAttnBlock: () => runFullAttnBlock
 });
@@ -3828,16 +3744,13 @@ async function runFullAttnBlock(ctx, layer, io) {
   residualAdd(ctx, hidden, ffnOut, nTokens * embeddingLength);
 }
 var init_block_full_attn = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/block_full_attn.ts"() {
+  "m27"() {
     "use strict";
     init_dispatch();
     init_ops();
     init_layers();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts
-var block_deltanet_exports = {};
+});var block_deltanet_exports = {};
 __export(block_deltanet_exports, {
   runDeltaNetBlock: () => runDeltaNetBlock
 });
@@ -3976,17 +3889,14 @@ async function runDeltaNetBlock(ctx, layer, io) {
 }
 var CONV_HISTORY;
 var init_block_deltanet = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/block_deltanet.ts"() {
+  "m28"() {
     "use strict";
     init_ops();
     init_dispatch();
     init_layers();
     CONV_HISTORY = /* @__PURE__ */ new WeakMap();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/layers.ts
-function blockTensorNames(kind, layer, ffnNormName) {
+});function blockTensorNames(kind, layer, ffnNormName) {
   const p = `blk.${layer}.`;
   if (kind === "full-attn" || kind === "dense-attn") {
     return [
@@ -4061,13 +3971,10 @@ async function runBlock(ctx, layer, io) {
   }
 }
 var init_layers = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/layers.ts"() {
+  "m29"() {
     "use strict";
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts
-var embed_lmhead_exports = {};
+});var embed_lmhead_exports = {};
 __export(embed_lmhead_exports, {
   embedTokens: () => embedTokens,
   projectLogits: () => projectLogits
@@ -4185,17 +4092,14 @@ async function projectLogits(ctx, hidden, lastTokenIndex, weights, config, vocab
   return logits;
 }
 var init_embed_lmhead = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/embed_lmhead.ts"() {
+  "m30"() {
     "use strict";
     init_dispatch();
     init_ops();
     init_reference();
     init_types();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai/model/forward.ts
-var forward_exports = {};
+});var forward_exports = {};
 __export(forward_exports, {
   BONSAI_DEBUG: () => BONSAI_DEBUG,
   bonsaiDebugEnabled: () => bonsaiDebugEnabled,
@@ -4323,7 +4227,7 @@ async function decodeStep(ctx, hidden, posBase, tokenizer) {
 }
 var READ_AHEAD_LAYERS, BONSAI_DEBUG;
 var init_forward = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai/model/forward.ts"() {
+  "m31"() {
     "use strict";
     init_layers();
     init_embed_lmhead();
@@ -4332,10 +4236,7 @@ var init_forward = __esm({
     READ_AHEAD_LAYERS = 3;
     BONSAI_DEBUG = false;
   }
-});
-
-// ../../apps/packages/awkit/src/webml/bonsai-worker-core.ts
-var bonsai_worker_core_exports = {};
+});var bonsai_worker_core_exports = {};
 __export(bonsai_worker_core_exports, {
   initBonsaiRuntime: () => initBonsaiRuntime
 });
@@ -4597,7 +4498,7 @@ async function initBonsaiRuntime(scope) {
   } };
 }
 var init_bonsai_worker_core = __esm({
-  "../../apps/packages/awkit/src/webml/bonsai-worker-core.ts"() {
+  "m32"() {
     "use strict";
     init_bonsai();
     init_gpu_class();
@@ -4605,10 +4506,7 @@ var init_bonsai_worker_core = __esm({
     init_device_class();
     init_bonsai_models();
   }
-});
-
-// ../../apps/packages/awkit/src/webml/models.ts
-var WEBML_MODELS = [
+});var WEBML_MODELS = [
   // Bonsai models via our own clean-room WGSL kernels (ported from the PrismML llama.cpp fork).
   // Aitherium's kernels, running on YOUR GPU, in your browser. Four sizes, all live as of 2026-07-28.
   {
@@ -4678,10 +4576,7 @@ var WEBML_MODELS = [
 ];
 function getWebMLModel(id) {
   return WEBML_MODELS.find((m) => m.id === id);
-}
-
-// ../../apps/packages/awkit/src/webml/worker-core.ts
-function runWebMLWorker(scope, deps) {
+}function runWebMLWorker(scope, deps) {
   let runtimeHandler = null;
   async function handleFirstLoad(modelId) {
     const model = getWebMLModel(modelId);
@@ -4789,13 +4684,7 @@ async function initBonsaiRuntime2(scope) {
     else if (req.type === "generate") void handler.generate(req);
     else if (req.type === "interrupt") handler.interrupt();
   };
-}
-
-// ../../apps/packages/awkit/src/webml/webml-text.entry.ts
-init_bonsai_models();
-
-// ../../apps/packages/awkit/src/webml/tool-loop.ts
-var MAX_TOOL_ROUNDS = 3;
+}init_bonsai_models();var MAX_TOOL_ROUNDS = 3;
 function renderToolsSystemBlock(specs) {
   let out = "You may call functions to help answer the user.\n\n";
   out += "You are provided with function signatures within <tools></tools> XML tags:\n";
@@ -4846,10 +4735,7 @@ function tryParseCallBody(body) {
     }
   }
   return null;
-}
-
-// ../../apps/packages/awkit/src/webml/webml-text.entry.ts
-init_device_class();
+}init_device_class();
 var DEFAULT_ENTRY_URL = new URL("./bonsai-worker-entry.js?v=2", import.meta.url).href;
 function createBonsaiChatWorker(opts) {
   const entry = opts?.entryUrl ?? DEFAULT_ENTRY_URL;

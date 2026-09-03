@@ -1,4 +1,4 @@
-// Built by build_webml_cdn.mjs — the app ships a copy at public/workers/ AND at
+// Generated — the app ships a copy at public/workers/ AND at
 // public/ root, because the runtime factory resolves DEFAULT_ENTRY_URL =
 // './bonsai-worker-entry.js' relative to the bundle's own URL (the site root).
 // Same-origin import on purpose: the worker chain must not depend on the CDN

@@ -26,7 +26,7 @@
  * an explicit consent flag the agent panel's chip sets.
  *
  * The runtime itself is the CDN bundle (webml-text.esm.js / webml-image.esm.js
- * on weights.aitherium.com, built by build_webml_cdn.mjs in the AitherOS tree).
+ * on weights.aitherium.com, built from the upstream runtime sources).
  * This file is a clean-room reimplementation of the LOADER contract only — no
  * proprietary runtime code is imported; the CDN bundles are loaded by URL.
  */
