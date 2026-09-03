@@ -457,6 +457,37 @@
   font-family: ui-monospace, monospace;
 }
 
+/* Demo credits meter (lane 3) — small, beside the tier line */
+.credits-meter {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.credits-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+.credits-chip-empty { color: var(--danger); border-color: rgba(255, 145, 137, 0.5); }
+.credits-chip-burst { color: var(--warn); border-color: rgba(234, 181, 50, 0.5); }
+.credits-exhausted {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 145, 137, 0.5);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.credits-exhausted-text { flex: 1 1 100%; color: var(--text-secondary); }
+
 /* Image backend — provider panel */
 .agent-backend {
   display: flex;

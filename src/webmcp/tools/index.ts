@@ -3,8 +3,9 @@
  * availability predicate. `ToolRegistry.reconcile()` walks this list after
  * every store change and registers/unregisters on the WebMCP surface.
  *
- * Registration order tells the demo story: 28 tools are live at boot (the
- * 19 of 2026-09-03 + nine mediaforge-* studio tools), and the
+ * Registration order tells the demo story: 30 tools are live at boot (32
+ * definitions minus the consent pair: the 19 of 2026-09-03 + nine mediaforge-*
+ * studio tools + demo-credits/gpu-burst -- pinned by tests/protocol-trace), and the
  * CONSENT PAIR (approve-batch + undo, P1.3) exists ONLY while a batch
  * is pending — both vanish the moment the human approves, and `toolchange`
  * fires as they appear and disappear. Design-scoped tools stay permanently
@@ -26,6 +27,7 @@ import { EXPORT_TOOLS } from './export';
 import { MEMORY_TOOLS } from './memory';
 import { PRODUCTION_TOOLS } from './production';
 import { VARIANT_TOOLS } from './variants';
+import { DEMO_TOOLS } from './demo';
 import { getStudioStore } from '../../state/store';
 import { describeDesign } from '../../state/doc';
 
@@ -47,6 +49,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   ...VIDEO_TOOLS, // render-video, video-status — narrated MP4 through the awrun-queued render lane (2026-09-03)
   ...STYLE_TOOLS, // restyle-design
   ...EXPORT_TOOLS, // export-design
+
+  // The demo governor (lane 3, 2026-09-03): always registered, server-gated.
+  ...DEMO_TOOLS, // demo-credits (read-only balances), gpu-burst (status|request|release under the owner's daily cap)
 ];
 
 /** Agent-readable summary of the whole studio state. */

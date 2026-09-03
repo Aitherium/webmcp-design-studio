@@ -81,6 +81,10 @@ const ALWAYS_ON = [
   'mediaforge-storyboard',
   'mediaforge-animate',
   'mediaforge-job-status',
+  // The demo governor (lane 3, 2026-09-03): always registered; the SERVER
+  // refuses (402/429) — an absent tool would hide the refusal reason.
+  'demo-credits',
+  'gpu-burst',
 ];
 const DESIGN_ONLY = [
   'add-text',
