@@ -3,8 +3,8 @@
  * availability predicate. `ToolRegistry.reconcile()` walks this list after
  * every store change and registers/unregisters on the WebMCP surface.
  *
- * Registration order tells the demo story: 16 tools are live at boot (14 +
- * production-log and draft-variants), and the
+ * Registration order tells the demo story: 17 tools are live at boot (14 +
+ * production-log, draft-variants and search-preferences), and the
  * CONSENT PAIR (approve-batch + undo, P1.3) exists ONLY while a batch
  * is pending — both vanish the moment the human approves, and `toolchange`
  * fires as they appear and disappear. Design-scoped tools stay permanently
@@ -29,7 +29,7 @@ import { describeDesign } from '../../state/doc';
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // Always available — the agent's opening hand.
   ...DESIGN_TOOLS, // list-designs, get-design-state, create-design, duplicate-design
-  ...MEMORY_TOOLS, // remember-preference, recall-preference
+  ...MEMORY_TOOLS, // remember-preference, recall-preference, search-preferences (by meaning, on-device)
   ...PRODUCTION_TOOLS, // production-log (P2.3 — the production exhibit)
   ...VARIANT_TOOLS, // draft-variants — N independent takes in one round trip (2026-09-02)
   ...BATCH_TOOLS, // approve-batch (pending-only), undo

@@ -65,6 +65,7 @@ const ALWAYS_ON = [
   // on a fresh page with no design.
   'production-log',
   'draft-variants',
+  'search-preferences',
 ];
 const DESIGN_ONLY = [
   'add-text',

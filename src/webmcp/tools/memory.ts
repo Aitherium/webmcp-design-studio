@@ -5,7 +5,8 @@
 import type { ToolDefinition } from '../types';
 import { ok, fail } from '../execute-io';
 import { getPref, setPref } from '../../state/memory';
-import { ToolError, argString } from './helpers';
+import { ToolError, argNumber, argString } from './helpers';
+import { EmbedderUnavailableError, searchPrefs } from '../../webml/prefEmbedder';
 
 export const rememberPreferenceTool: ToolDefinition = {
   name: 'remember-preference',
@@ -56,4 +57,40 @@ export const recallPreferenceTool: ToolDefinition = {
   },
 };
 
-export const MEMORY_TOOLS: ToolDefinition[] = [rememberPreferenceTool, recallPreferenceTool];
+export const searchPreferencesTool: ToolDefinition = {
+  name: 'search-preferences',
+  title: 'Search preferences by meaning',
+  description:
+    'Find saved preferences by MEANING, not exact key: "what did the user say about colours" finds ' +
+    'brand_color. Ranks every remembered preference with the aither-code-embed model (0.6B, 1024-dim) ' +
+    'running INSIDE this tab; nothing leaves the device. The 396 MB model downloads once, only after ' +
+    'the human has accepted the on-device consent chip in the agent panel; without that consent this ' +
+    'tool returns an error naming it, and recall-preference (exact key) still works. An empty store ' +
+    'answers instantly with no download. Returns {query, results:[{key,value,score}], searched}.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', maxLength: 500, description: 'Natural-language question or topic' },
+      limit: { type: 'integer', minimum: 1, maximum: 10, description: 'Max results (default 5)' },
+    },
+    required: ['query'],
+  },
+  annotations: { readOnlyHint: true },
+  async execute(args) {
+    try {
+      const query = argString(args, 'query', { required: true, maxLength: 500 })!;
+      const limit = argNumber(args, 'limit', { min: 1, max: 10, integer: true }) ?? 5;
+      const result = await searchPrefs(query, { limit });
+      return ok(JSON.stringify(result));
+    } catch (err) {
+      const msg = err instanceof ToolError || err instanceof EmbedderUnavailableError ? err.message : String(err);
+      return fail(`could not search preferences: ${msg}`);
+    }
+  },
+};
+
+export const MEMORY_TOOLS: ToolDefinition[] = [
+  rememberPreferenceTool,
+  recallPreferenceTool,
+  searchPreferencesTool,
+];

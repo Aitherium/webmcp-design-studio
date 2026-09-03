@@ -77,6 +77,33 @@ export async function getPref(key: string): Promise<string | null> {
   }
 }
 
+/**
+ * Every saved preference, unscoped keys. Backs search-preferences: the
+ * embedder ranks these by meaning at QUERY time, so remember-preference
+ * stays a plain write (no model on the save path).
+ */
+export async function listPrefs(): Promise<Array<{ key: string; value: string }>> {
+  const db = await openDb();
+  try {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const [keys, values] = await Promise.all([
+      requestResult(store.getAllKeys()),
+      requestResult(store.getAll()),
+    ]);
+    const out: Array<{ key: string; value: string }> = [];
+    keys.forEach((k, i) => {
+      const v = values[i];
+      if (typeof k === 'string' && k.startsWith(KEY_PREFIX) && typeof v === 'string') {
+        out.push({ key: k.slice(KEY_PREFIX.length), value: v });
+      }
+    });
+    return out;
+  } finally {
+    db.close();
+  }
+}
+
 /** Test/dev helper: wipe every preference. */
 export async function clearPrefs(): Promise<void> {
   const db = await openDb();
