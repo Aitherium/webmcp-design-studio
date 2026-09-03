@@ -21,12 +21,20 @@ export interface ModelContextTool {
    * value is JSON-stringified and handed to the agent as a DOMString.
    */
   execute: (input: Record<string, unknown>, options: { signal: AbortSignal }) => Promise<unknown>;
-  annotations?: {
-    /** Tool does not mutate state. */
-    readOnlyHint?: boolean;
-    /** Output may contain untrusted content. */
-    untrustedContentHint?: boolean;
-  };
+  annotations?: ToolAnnotations;
+}
+
+/** Tool annotations — the WebMCP pair (readOnly / untrustedContent) plus the
+ * MCP-standard destructive / idempotent hints the fleet tools declare. */
+export interface ToolAnnotations {
+  /** Tool does not mutate state. */
+  readOnlyHint?: boolean;
+  /** Output may contain untrusted content. */
+  untrustedContentHint?: boolean;
+  /** Tool may perform destructive updates (MCP). */
+  destructiveHint?: boolean;
+  /** Repeating the call with the same args has no additional effect (MCP). */
+  idempotentHint?: boolean;
 }
 
 /** Callback signature of `execute`. */
@@ -43,7 +51,7 @@ export interface RegisteredTool {
   window: Window | null;
   /** Origin of the registering document. */
   origin: string | null;
-  annotations?: { readOnlyHint?: boolean; untrustedContentHint?: boolean };
+  annotations?: ToolAnnotations;
 }
 
 /** `registerTool(tool, options)` — index.bs. */

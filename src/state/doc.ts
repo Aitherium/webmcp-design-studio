@@ -14,7 +14,10 @@ import {
   type PaletteId,
 } from '../brand/tokens';
 
-export type ElementType = 'text' | 'image' | 'rect';
+/** 'video' (2026-09-03, the MediaForge animate lane): `src` is an mp4/webm URL
+ * (data: or https). The canvas draws its POSTER frame (first frame, captured
+ * into an image) and export renders that poster. */
+export type ElementType = 'text' | 'image' | 'rect' | 'video';
 
 /** CSS font-family ids accepted by tools; mapped to real stacks on render. */
 export const FONT_FAMILY_IDS = ['sans', 'serif', 'mono', 'display'] as const;
@@ -39,6 +42,10 @@ export interface DesignElement {
   src?: string;
   /** 96px preview for image elements. */
   thumbnail?: string;
+  /** Poster frame (data URL) for video elements — captured at placement when
+   * the browser can decode the video; the canvas falls back to capturing it
+   * itself, then to a labelled placeholder. */
+  poster?: string;
   /** Generator seed for image elements. */
   seed?: number;
   x: number;
@@ -207,14 +214,17 @@ export interface ElementSummary {
   align?: Align;
   /** True when an image element has an attached image (src never serialized). */
   hasImage?: boolean;
+  /** True when a video element has a source (src never serialized). */
+  hasVideo?: boolean;
 }
 
 /** Agent-facing element view: never includes `src` (full data URLs). */
 export function summarizeElement(el: DesignElement): ElementSummary {
-  const { src: _src, thumbnail: _thumb, seed: _seed, ...rest } = el;
+  const { src: _src, thumbnail: _thumb, seed: _seed, poster: _poster, ...rest } = el;
   return {
     ...rest,
     hasImage: el.type === 'image' ? Boolean(el.src) : undefined,
+    hasVideo: el.type === 'video' ? Boolean(el.src) : undefined,
   };
 }
 

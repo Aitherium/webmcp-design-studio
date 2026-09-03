@@ -14,11 +14,12 @@
  * `toDataURL` powers export-design through the exporter hook.
  */
 import { useEffect, useRef, type RefObject } from 'react';
-import { Canvas, FabricImage, Gradient, Rect, Textbox, type FabricObject, type IText } from 'fabric';
+import { Canvas, FabricImage, Gradient, Group, Rect, Textbox, type FabricObject, type IText } from 'fabric';
 import { getStudioStore } from '../state/store';
 import { DESIGN_PALETTES } from '../brand/tokens';
 import { effectiveDoc, FONT_FAMILY_CSS, type DesignDoc, type DesignElement } from '../state/doc';
 import { setCanvasExporter, type ExportRequest, type ExportResult } from './exporter';
+import { capturePosterFrame } from './videoPoster';
 
 function findElementId(objects: ReadonlyMap<string, FabricObject>, target: FabricObject): string | null {
   for (const [id, obj] of objects) {
@@ -72,6 +73,7 @@ async function createFabricObject(el: DesignElement): Promise<FabricObject> {
     img.set({ scaleX: el.width / img.width, scaleY: el.height / img.height });
     return img;
   }
+  if (el.type === 'video') return createVideoObject(el);
   return new Rect({
     left: el.x,
     top: el.y,
@@ -81,6 +83,33 @@ async function createFabricObject(el: DesignElement): Promise<FabricObject> {
     angle: el.rotation,
     opacity: el.opacity,
   });
+}
+
+/**
+ * A video element renders as its POSTER FRAME (2026-09-03): the stored
+ * poster, else a live first-frame capture, else a labelled placeholder so
+ * the element is visible and movable even where nothing can decode video
+ * (jsdom, a codec the browser lacks). Export renders the same poster.
+ */
+async function createVideoObject(el: DesignElement): Promise<FabricObject> {
+  const poster = el.poster ?? (el.src ? await capturePosterFrame(el.src) : null);
+  if (poster) {
+    const img = await FabricImage.fromURL(poster);
+    img.set({ left: el.x, top: el.y, angle: el.rotation, opacity: el.opacity });
+    img.set({ scaleX: el.width / Math.max(img.width, 1), scaleY: el.height / Math.max(img.height, 1) });
+    return img;
+  }
+  const frame = new Rect({ left: 0, top: 0, width: el.width, height: el.height, fill: '#111827', stroke: '#2AD7D7', strokeWidth: 2 });
+  const label = new Textbox('▶ video', {
+    left: 0,
+    top: Math.max(0, el.height / 2 - 14),
+    width: el.width,
+    fontSize: 28,
+    fill: '#2AD7D7',
+    textAlign: 'center',
+    fontFamily: FONT_FAMILY_CSS.sans,
+  });
+  return new Group([frame, label], { left: el.x, top: el.y, angle: el.rotation, opacity: el.opacity });
 }
 
 function applyProps(obj: FabricObject, el: DesignElement, applying: { current: boolean }): void {
@@ -108,7 +137,7 @@ function applyProps(obj: FabricObject, el: DesignElement, applying: { current: b
         scaleX: 1,
         scaleY: 1,
       });
-    } else if (obj instanceof FabricImage) {
+    } else if (obj instanceof FabricImage || obj instanceof Group) {
       obj.set({ scaleX: el.width / Math.max(obj.width, 1), scaleY: el.height / Math.max(obj.height, 1) });
     }
     obj.setCoords();

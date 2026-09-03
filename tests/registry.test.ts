@@ -70,6 +70,17 @@ const ALWAYS_ON = [
   // "no design exists"; video-status needs no design at all.
   'render-video',
   'video-status',
+  // The Media-Forge STUDIO lane (2026-09-03): ComfyUI pipelines behind
+  // media-forge, always registered; call-time guards answer "no image".
+  'mediaforge-upscale',
+  'mediaforge-enhance',
+  'mediaforge-restyle',
+  'mediaforge-relight',
+  'mediaforge-outpaint',
+  'mediaforge-critique',
+  'mediaforge-storyboard',
+  'mediaforge-animate',
+  'mediaforge-job-status',
 ];
 const DESIGN_ONLY = [
   'add-text',

@@ -277,6 +277,7 @@ export const createStudioStore = () => {
           text: input.text,
           src: input.src,
           thumbnail: input.thumbnail,
+          poster: input.poster,
           seed: input.seed,
           x: input.x,
           y: input.y,

@@ -18,6 +18,7 @@ import { argString, ToolError, currentBatchSummary } from './helpers';
 import { withTimeout, withGenerationHeartbeat } from './image';
 import { MEDIAFORGE_BASE } from './serviceBases';
 import { makeThumbnail } from './thumbnail';
+import { blobToDataUrl, srcToFormData } from './mediaforgeClient';
 import { effectiveDoc } from '../../state/doc';
 
 const REMOVE_BG_TIMEOUT_MS = 180_000;
@@ -39,19 +40,6 @@ export function resolveImageTarget(
   }
   if (!el) return { error: `no image element found${target === 'last-image' ? '' : ` for '${target}'`} — generate an image first (generate-image or iris-generate)` };
   return { elementId: el.id, src: el.src as string };
-}
-
-/** Convert a data URL to a multipart FormData file — the /api/upload
- * contract (field name `file`, measured live 2026-08-31). */
-async function dataUrlToFormData(dataUrl: string): Promise<FormData> {
-  const [head, b64] = dataUrl.split(',');
-  const mime = /data:([^;]+);/.exec(head)?.[1] ?? 'image/png';
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const fd = new FormData();
-  fd.append('file', new Blob([bytes], { type: mime }), 'cutout-source.png');
-  return fd;
 }
 
 export const mediaforgeRemoveBgTool: ToolDefinition = {
@@ -86,7 +74,7 @@ export const mediaforgeRemoveBgTool: ToolDefinition = {
           // media_id=<the dataUrl>": wrong path, wrong payload, wrong field.
           const uploadRes = await fetch(`${MEDIAFORGE_BASE}/api/upload`, {
             method: 'POST',
-            body: await dataUrlToFormData(found.src),
+            body: await srcToFormData(found.src, 'cutout-source.png'),
           });
           if (!uploadRes.ok) {
             throw new ToolError(
@@ -134,18 +122,5 @@ export const mediaforgeRemoveBgTool: ToolDefinition = {
     }
   },
 };
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
-  // Chunked btoa — FileReader.readAsDataURL is broken in some jsdom/CI
-  // environments ("Failed to execute 'readAsDataURL'", CI node 22 2026-08-31)
-  // and the chunked path avoids the call-stack limit on large images anyway.
-  const buf = new Uint8Array(await blob.arrayBuffer());
-  let bin = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < buf.length; i += CHUNK) {
-    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
-  }
-  return `data:${blob.type || 'image/png'};base64,${btoa(bin)}`;
-}
 
 export const MEDIAFORGE_TOOLS: ToolDefinition[] = [mediaforgeRemoveBgTool];

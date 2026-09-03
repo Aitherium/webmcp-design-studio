@@ -3,8 +3,8 @@
  * availability predicate. `ToolRegistry.reconcile()` walks this list after
  * every store change and registers/unregisters on the WebMCP surface.
  *
- * Registration order tells the demo story: 17 tools are live at boot (14 +
- * production-log, draft-variants and search-preferences), and the
+ * Registration order tells the demo story: 28 tools are live at boot (the
+ * 19 of 2026-09-03 + nine mediaforge-* studio tools), and the
  * CONSENT PAIR (approve-batch + undo, P1.3) exists ONLY while a batch
  * is pending — both vanish the moment the human approves, and `toolchange`
  * fires as they appear and disappear. Design-scoped tools stay permanently
@@ -17,6 +17,8 @@ import { ELEMENT_TOOLS } from './elements';
 import { IMAGE_TOOLS } from './image';
 import { IRIS_TOOLS } from './iris';
 import { MEDIAFORGE_TOOLS } from './mediaforge';
+import { MEDIAFORGE_STUDIO_TOOLS } from './mediaforgeStudio';
+import { MEDIAFORGE_JOB_TOOLS } from './mediaforgeJobs';
 import { VIDEO_TOOLS } from './video';
 import { STYLE_TOOLS } from './style';
 import { BATCH_TOOLS } from './batch';
@@ -40,6 +42,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   ...IMAGE_TOOLS, // generate-image
   ...IRIS_TOOLS, // iris-generate — the autonomous pipeline
   ...MEDIAFORGE_TOOLS, // mediaforge-remove-bg — the cutout
+  ...MEDIAFORGE_STUDIO_TOOLS, // upscale/enhance/restyle/relight/outpaint/critique/storyboard — ComfyUI behind media-forge (2026-09-03)
+  ...MEDIAFORGE_JOB_TOOLS, // mediaforge-animate (async WAN i2v → video element) + mediaforge-job-status
   ...VIDEO_TOOLS, // render-video, video-status — narrated MP4 through the awrun-queued render lane (2026-09-03)
   ...STYLE_TOOLS, // restyle-design
   ...EXPORT_TOOLS, // export-design
