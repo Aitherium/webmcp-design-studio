@@ -421,7 +421,7 @@ export async function releaseBurst(): Promise<{ ok: boolean; was_up: boolean }> 
 
 export type HostedTurnGate =
   | { allowed: true; metered: boolean; credits: DemoCredits | null }
-  | { allowed: false; reason: 'credits_exhausted'; fix: string };
+  | { allowed: false; reason: 'credits_exhausted' | 'governor_unreachable'; fix: string };
 
 /**
  * Called by the agent panel BEFORE a hosted (fleet) turn is sent. Only the
@@ -444,6 +444,23 @@ export async function meterHostedTurn(
       return { allowed: false, reason: 'credits_exhausted', fix: err.fix };
     }
     publish({ error: err instanceof Error ? err.message : String(err) });
+    if (isPublicDemoOrigin()) {
+      // The PUBLIC demo is metered by contract: a governor that is not answering
+      // means nobody is counting, and an unmetered hosted turn there is spend nobody
+      // approved. The two free lanes still work; name them (owner, 2026-09-03).
+      return {
+        allowed: false,
+        reason: 'governor_unreachable',
+        fix: 'the hosted demo lane is metered and its governor is not answering — switch to the on-device brain or bring your own key',
+      };
+    }
     return { allowed: true, metered: false, credits: snapshot.credits };
   }
+}
+
+/** True on the public demo origins, where the hosted lane must FAIL CLOSED. */
+export function isPublicDemoOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  const h = window.location.hostname;
+  return h === 'studio.aitherium.com' || h === 'studio-preview.aitherium.com';
 }

@@ -268,13 +268,28 @@ describe('meterHostedTurn — the guard the agent panel runs BEFORE a fleet turn
     expect(gov.calls).toHaveLength(0);
   });
 
-  it('an unreachable governor lets the turn through UNMETERED and records the error', async () => {
+  it('an unreachable governor on a DEV origin lets the turn through UNMETERED and records the error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     }));
     const gate = await meterHostedTurn('fleet');
     expect(gate).toMatchObject({ allowed: true, metered: false });
     expect(getDemoSnapshot().error).toContain('Failed to fetch');
+  });
+
+  it('an unreachable governor on the PUBLIC origin FAILS CLOSED and names the free lanes', async () => {
+    const loc = window.location;
+    vi.stubGlobal('location', { ...loc, hostname: 'studio.aitherium.com' });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }));
+    try {
+      const gate = await meterHostedTurn('fleet');
+      expect(gate).toMatchObject({ allowed: false, reason: 'governor_unreachable' });
+      expect(String((gate as { fix?: string }).fix)).toMatch(/on-device|own key/);
+    } finally {
+      vi.stubGlobal('location', loc);
+    }
   });
 });
 
