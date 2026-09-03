@@ -357,9 +357,9 @@ describe('requestBurst — POST /burst', () => {
 /* ── the tools ────────────────────────────────────────────────────────────── */
 
 describe('demo-credits + gpu-burst tools', () => {
-  it('are registered at the END of the roster with the declared annotations', () => {
+  it('are registered at the END of the roster (before iris-produce, which lane 2 appended 2026-09-03) with the declared annotations', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
-    expect(names.slice(-2)).toEqual(['demo-credits', 'gpu-burst']);
+    expect(names.slice(-3)).toEqual(['demo-credits', 'gpu-burst', 'iris-produce']);
     expect(DEMO_TOOLS).toEqual([demoCreditsTool, gpuBurstTool]);
     expect(demoCreditsTool.annotations?.readOnlyHint).toBe(true);
     expect(gpuBurstTool.annotations?.readOnlyHint).toBe(false);

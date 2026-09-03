@@ -50,12 +50,12 @@ afterEach(() => {
 });
 
 describe('registration', () => {
-  it('both tools are in the registry and the count is 32 (21 + nine mediaforge-* studio tools + demo-credits + gpu-burst, 2026-09-03)', () => {
+  it('both tools are in the registry and the count is 33 (21 + nine mediaforge-* studio tools + demo-credits + gpu-burst + iris-produce, 2026-09-03)', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('render-video');
     expect(names).toContain('video-status');
     expect(VIDEO_TOOLS).toHaveLength(2);
-    expect(TOOL_DEFINITIONS).toHaveLength(32);
+    expect(TOOL_DEFINITIONS).toHaveLength(33);
   });
 });
 

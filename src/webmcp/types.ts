@@ -93,9 +93,12 @@ export interface StudioStateLike {
  * rendered as a monospace scrollback so a judge SEES the protocol working. */
 export interface ProtocolEvent {
   ts: number;
-  kind: 'register' | 'unregister' | 'toolchange' | 'execute';
+  /** `step`: one sub-step of a COMPOUND tool (iris-produce, 2026-09-03) —
+   * `tool` is the step name (`iris.enhance`), `detail` its one-line summary,
+   * `ok`/`elapsedMs` the outcome. Pushed by the tool itself, not the registry. */
+  kind: 'register' | 'unregister' | 'toolchange' | 'execute' | 'step';
   tool: string;
-  /** execute: the input args (JSON, truncated). toolchange: the delta. */
+  /** execute: the input args (JSON, truncated). toolchange: the delta. step: the summary. */
   detail?: string;
   ok?: boolean;
   elapsedMs?: number;
