@@ -10,6 +10,30 @@ import { computeEmbed, markEmbedChrome } from './embed';
 import { installEmbedBridge } from './embedBridge';
 import './dev/scriptedAgent'; // window.__judgeScript()
 
+/**
+ * Origin trial (WebMCP, Chrome 149+, for https://studio.aitherium.com).
+ *
+ * This lives HERE and not in index.html on purpose. Vite substitutes a
+ * `%VITE_X%` placeholder in HTML only for vars that are DEFINED, and passes an
+ * unset one through verbatim — so the previous version shipped a literal
+ * `%VITE_OT_TOKEN%` to production, inside the one block a judge reading source
+ * for a WebMCP entry is most likely to open. Nothing broke and nothing said a
+ * word. `import.meta.env` has no such failure mode: unset compiles to
+ * `undefined` and the branch is simply dead.
+ *
+ * The token is OPTIONAL. Without it the polyfill takes over and the StatusBar
+ * says so in amber, naming chrome://flags/#enable-webmcp-testing — a supported
+ * path, not a break. Injected before any modelContext use, which is what the
+ * origin-trial mechanism requires.
+ */
+const OT_TOKEN = import.meta.env.VITE_OT_TOKEN;
+if (OT_TOKEN) {
+  const meta = document.createElement('meta');
+  meta.httpEquiv = 'origin-trial';
+  meta.content = OT_TOKEN;
+  document.head.appendChild(meta);
+}
+
 // Embed mode (framed in the Community Canvas, or ?embed=1): strip the app
 // chrome so the studio reads as part of the hosting page. The standalone
 // surface is untouched when not embedded.
