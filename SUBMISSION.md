@@ -75,6 +75,17 @@ legible, not magic.
 - **The same workspace, any agent** — ChatGPT's browser agent, the studio's in-page
   agent, and (via the registry) any future WebMCP agent all drive the identical
   surface, with the design state reconciled live between them.
+- **Tools that cross a document boundary** — WebMCP tools are per-document, so an
+  agent driving a page that *frames* an app cannot see that app's tools. The studio
+  answers a small postMessage protocol (`src/embedBridge.ts`) that lets a host page
+  register PROXY tools on its own `document.modelContext` and forward calls into the
+  frame — so embedding the studio makes the HOST a richer WebMCP surface, and the
+  consent boundary travels with it: `approve-batch` appears and vanishes on the host's
+  tool list via forwarded `toolchange`. This is the part that generalises past one app.
+  A page can compose its agent surface out of the apps it embeds, instead of every site
+  reimplementing every capability. Trust is explicit rather than ambient: only
+  allow-listed host origins are answered, replies target `event.origin` and never `*`,
+  and standalone mode installs nothing at all.
 - **A production studio, not a toy** — `iris-generate` runs the platform's Visual
   Artisan (AI prompt optimization + a real generation pipeline), and
   `mediaforge-remove-bg` chains a BiRefNet cutout onto any generated image: the agent
@@ -89,6 +100,11 @@ legible, not magic.
   appear/disappear as batches pend and commit, with `toolchange` events. The registry
   records every registration and execution into a bounded **protocol feed** shown in
   the UI.
+- **Cross-frame bridge** (`src/embedBridge.ts`): a versioned postMessage protocol
+  (`list` / `tools` / `execute` / `result` / unsolicited `toolchange`) that projects the
+  studio's live tool surface onto a framing page's `document.modelContext`. Origin
+  allow-listed in both directions; the same reconciliation that drives the local surface
+  drives the remote one, so the two cannot disagree about which tools exist.
 - **A working agent loop** (`src/agent/loop.ts`): Hermes-style `<tools>` /
   `<tool_call>` / `<tool_response>` rendering, lenient parsing for small models
   (trailing-comma repair, brace stutter, truncation recovery with a one-shot
