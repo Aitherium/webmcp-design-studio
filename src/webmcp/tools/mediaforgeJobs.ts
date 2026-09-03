@@ -225,7 +225,7 @@ export const mediaforgeAnimateTool: ToolDefinition = {
         status: 'running',
       };
       JOBS.set(jobId, rec);
-      const poll = await pollJobWithBudget(jobId, (p) => setProgress(`animating on the fleet… ${p.label}`));
+      const poll = await pollJobWithBudget(jobId, (p) => setProgress(`animating on the fleet… ${p.state === 'running' ? p.label : p.state}`));
       setProgress(null);
       return await settle(rec, poll);
     } catch (err) {
