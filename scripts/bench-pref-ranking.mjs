@@ -21,14 +21,19 @@ const QUERIES = [
   ['how should the copy sound','tone'],['how should the logo look','logo_style'],['when are they open','opening_hours'],
   ['who are we designing for','target_audience'],['instagram account','social_handle'],
 ];
+// WEIGHTS_URL lets a candidate GGUF be scored in the REAL runtime before the studio ships it
+// (2026-09-03: the aither-studio-embed recipe trains with an EMPTY query prefix, so the
+// candidate is scored on the 'raw (no prefix)' row; the shipped code-embed on its prefix row).
+const WEIGHTS = process.env.WEIGHTS_URL || 'https://artifact.aitherium.com/aither-code-embed-v1/aither-code-embed.q4_k_m.gguf';
+console.log('weights:', WEIGHTS);
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 await page.goto('https://studio.aitherium.com/', { waitUntil: 'domcontentloaded', timeout: 90000 });
-const out = await page.evaluate(async ({ PREFS, QUERIES }) => {
+const out = await page.evaluate(async ({ PREFS, QUERIES, WEIGHTS }) => {
   const w = new Worker('/workers/code-embed-wasm-worker.js');
   const pending = new Map(); let seq = 0;
   const ready = new Promise((res, rej) => { w.addEventListener('message', e => { const m = e.data; if (m.type==='ready') res(); if (m.type==='error') rej(new Error(m.message)); if (m.type==='embed-result'||m.type==='embed-error') { const p = pending.get(m.requestId); if (!p) return; pending.delete(m.requestId); m.type==='embed-result' ? p.res(m.vectors) : p.rej(new Error(m.error)); } }); });
-  w.postMessage({ type: 'load', modelId: 'https://artifact.aitherium.com/aither-code-embed-v1/aither-code-embed.q4_k_m.gguf' });
+  w.postMessage({ type: 'load', modelId: WEIGHTS });
   const t0 = Date.now(); await ready; const loadMs = Date.now() - t0;
   const embed = (texts, mode) => new Promise((res, rej) => { const id = 'r' + (++seq); pending.set(id, { res, rej }); w.postMessage({ type: 'embed', requestId: id, texts, mode }); });
   const cos = (a, b) => { let d=0,na=0,nb=0; for (let i=0;i<a.length;i++){d+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];} return d/Math.sqrt(na*nb); };
@@ -47,7 +52,7 @@ const out = await page.evaluate(async ({ PREFS, QUERIES }) => {
   const table = {};
   for (const [name, qvs] of Object.entries(variants)) for (const lw of [0, 0.15, 0.3]) table[`${name} + lex*${lw}`] = score(qvs, lw);
   return { loadMs, table };
-}, { PREFS, QUERIES });
+}, { PREFS, QUERIES, WEIGHTS });
 console.log('load ms:', out.loadMs);
 for (const [k, v] of Object.entries(out.table)) console.log(k.padEnd(34), 'top1', v.top1, 'margin', v.meanMargin, v.misses.length ? ' misses: ' + v.misses.join(' | ') : '');
 await browser.close();
