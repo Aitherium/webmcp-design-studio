@@ -25,10 +25,18 @@
  *    promise that never settles reads as "generating forever".
  */
 
+// aither-studio-embed: Qwen3-Embedding-0.6B fine-tuned on agent-question <-> preference-record
+// pairs (recipe: AitherOS config/embedders/aither-studio-embed.yaml). It replaced the
+// code-search student, which scored 6/12 top-1 on the studio gold set for every
+// inference-time variant. The recipe's query_prefix is EMPTY, so queries go to the worker
+// RAW (mode "document") -- train and serve must agree, and the code-search Instruct prefix
+// the worker adds in mode "query" would be a mismatch here.
 export const CODE_EMBED_WEIGHTS_URL =
-  'https://artifact.aitherium.com/aither-code-embed-v1/aither-code-embed.q4_k_m.gguf';
+  'https://artifact.aitherium.com/aither-studio-embed-v1/aither-studio-embed.q4_k_m.gguf';
 export const CODE_EMBED_DIM = 1024;
-export const CODE_EMBED_PROVIDER = 'aither-code-embed';
+export const CODE_EMBED_PROVIDER = 'aither-studio-embed';
+/** The recipe's query_prefix is "", so both sides embed raw text. */
+export const QUERY_EMBED_MODE: EmbedMode = 'document';
 export const EMBED_WORKER_URL = '/workers/code-embed-wasm-worker.js';
 /** 396 MB cold. Generous on purpose: slow-but-alive must not read as dead. */
 export const EMBED_LOAD_TIMEOUT_MS = 300_000;
@@ -341,7 +349,7 @@ export async function searchPrefs(
   if (!consent()) throw new EmbedderUnavailableError(CONSENT_REQUIRED_MESSAGE);
 
   const embed: EmbedFn = opts.embed ?? ((t, m) => sharedPrefEmbedder().embed(t, m));
-  const [qv] = await embed([query], 'query');
+  const [qv] = await embed([query], QUERY_EMBED_MODE);
   const docVecs = await embed(
     items.map((it) => prefDocument(it.key, it.value)),
     'document',

@@ -62,7 +62,8 @@ export const searchPreferencesTool: ToolDefinition = {
   title: 'Search preferences by meaning',
   description:
     'Find saved preferences by MEANING, not exact key: "what did the user say about colours" finds ' +
-    'brand_color. Ranks every remembered preference with the aither-code-embed model (0.6B, 1024-dim) ' +
+    'brand_color. Ranks every remembered preference with the aither-studio-embed model (0.6B, 1024-dim, ' +
+    'trained on design-preference recall) ' +
     'running INSIDE this tab; nothing leaves the device. The 396 MB model downloads once, only after ' +
     'the human has accepted the on-device consent chip in the agent panel; without that consent this ' +
     'tool returns an error naming it, and recall-preference (exact key) still works. An empty store ' +

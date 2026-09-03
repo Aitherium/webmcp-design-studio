@@ -109,12 +109,15 @@ describe('searchPrefs gates', () => {
       embed,
       limit: 1,
     });
-    expect(calls[0]).toEqual([['what colour does the user like'], 'query']);
+    // The studio recipe's query_prefix is "", so the query goes RAW (mode "document"):
+    // mode "query" would prepend the worker's code-search Instruct prefix, a train/serve
+    // mismatch for this model.
+    expect(calls[0]).toEqual([['what colour does the user like'], 'document']);
     expect(calls[1]).toEqual([['store_address: 12 Main St', 'brand_color: #ff6600'], 'document']);
     expect(r.searched).toBe(2);
     expect(r.results).toHaveLength(1);
     expect(r.results[0].key).toBe('brand_color');
-    expect(r.provider).toBe('aither-code-embed');
+    expect(r.provider).toBe('aither-studio-embed');
     expect(r.dim).toBe(CODE_EMBED_DIM);
   });
 });
