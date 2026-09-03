@@ -45,6 +45,12 @@ covering the whole creative loop across fifteen families:
   bring-your-own-key). `gpu-burst` rents a cloud GPU for ComfyUI through the platform's
   governor — under the owner's daily cap, at a price ceiling, torn down after twenty idle
   minutes — so a stranger can spin heavy media work up on demand and cannot run up a bill.
+- **Connect your own agent** (not a tool — a door): the tab pairs itself to a public
+  remote-MCP endpoint (`https://studio-preview.aitherium.com/api/mcp/<CODE>`, Streamable
+  HTTP) and re-exposes its LIVE tool roster there, so a visitor's own ChatGPT or Claude
+  connector drives the studio tab they have open. Measured live: a remote `tools/call
+  add-text` landed on the canvas of a paired tab within a second. The code is the
+  capability — six characters, thirty minutes, one tab, only what the tab exposes.
 - **Memory**: `remember-preference`, `recall-preference`, `search-preferences` (recall by
   meaning with an embedder trained for this studio, running in the tab)
 - **Drafting**: `draft-variants` — N independent takes (headline, tagline, palette,

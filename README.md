@@ -12,7 +12,8 @@ The page registers its capabilities as in-page tools via
 `document.modelContext.registerTool()` — tools like `create-design`, `add-text`,
 `edit-element`, `generate-image`, `restyle-design`, `export-design`, `render-video`, and a
 ComfyUI media pipeline (`mediaforge-upscale` … `mediaforge-animate`) behind per-visitor demo
-credits and a capped on-demand GPU burst. Any WebMCP-capable
+credits and a capped on-demand GPU burst — and the tab can pair itself to a public remote-MCP
+URL so your own ChatGPT or Claude drives it. Any WebMCP-capable
 agent (ChatGPT's in-app browser, Chrome's agent, or the studio's own on-device agent)
 discovers them, and then a human + agent can collaborate:
 
