@@ -58,3 +58,18 @@ export const VIDEO_BASE =
     window.location.hostname === 'studio-preview.aitherium.com')
     ? 'https://studio-preview.aitherium.com/api/video'
     : '/api/video/';
+
+/**
+ * PAIRING lane (2026-09-03, lane 4): "Connect your own agent". The studio's
+ * nginx relays `/api/pair/` (mint a code + the tab's WebSocket) and
+ * `/api/mcp/` (the public MCP Streamable HTTP endpoint a visitor pastes into
+ * ChatGPT / Claude) to AitherStudioPair. Same origin-aware shape as the lanes
+ * above; NOTE this base carries no lane segment — the client appends
+ * `/pair/new`, `/pair/ws/<CODE>` and `/mcp/<CODE>` itself.
+ */
+export const PAIR_BASE =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'studio.aitherium.com' ||
+    window.location.hostname === 'studio-preview.aitherium.com')
+    ? 'https://studio-preview.aitherium.com/api'
+    : '/api';

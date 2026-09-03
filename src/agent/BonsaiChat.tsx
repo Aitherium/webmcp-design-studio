@@ -50,6 +50,7 @@ import {
 import { unwrapToolResponse } from './scripted';
 import { meterHostedTurn } from '../demo/credits';
 import { CreditsMeter } from '../demo/CreditsMeter';
+import { PairPanel } from '../pairing/PairPanel';
 
 interface Bubble {
   role: 'user' | 'agent' | 'tool' | 'system';
@@ -592,6 +593,11 @@ export function BonsaiChat() {
           </>
         )}
       </div>
+
+      {/* Connect your own agent (2026-09-03, WebMCP lane 4): pair this tab to a
+          public remote-MCP endpoint so the visitor's ChatGPT / Claude drives
+          the studio's live tools. Beside the BYOK lanes on purpose. */}
+      <PairPanel />
 
       {/* Tier C: honest dead-end, no broken panel */}
       {tier === 'C' ? (

@@ -758,3 +758,45 @@
   color: var(--text-muted);
   margin-left: auto;
 }
+
+/* Connect your own agent — the pairing card (2026-09-03, WebMCP lane 4) */
+.pair-panel {
+  gap: 0.4rem;
+}
+.pair-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+.pair-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.pair-status {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+.pair-status-connected {
+  color: #7ee787;
+}
+.pair-status-expired,
+.pair-status-error,
+.pair-error {
+  color: #ffa198;
+}
+.pair-error {
+  font-size: 0.8rem;
+  margin: 0;
+}
+.pair-url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+}
