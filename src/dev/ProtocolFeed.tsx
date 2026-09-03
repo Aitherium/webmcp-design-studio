@@ -16,6 +16,7 @@ const KIND_LABEL: Record<ProtocolEvent['kind'], string> = {
   unregister: 'UNREGISTER',
   toolchange: 'TOOLCHANGE',
   execute: 'EXECUTE',
+  step: 'STEP',
 };
 
 function fmtTime(ts: number): string {

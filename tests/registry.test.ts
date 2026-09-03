@@ -85,6 +85,10 @@ const ALWAYS_ON = [
   // refuses (402/429) — an absent tool would hide the refusal reason.
   'demo-credits',
   'gpu-burst',
+  // The IRIS agent mode (lane 2, 2026-09-03): the compound plan→enhance→
+  // generate→critique→refine→place tool; always registered, call-time guard
+  // answers "no design exists".
+  'iris-produce',
 ];
 const DESIGN_ONLY = [
   'add-text',

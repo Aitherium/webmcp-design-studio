@@ -30,11 +30,11 @@ function setup() {
 }
 
 describe('protocol feed — the registry records the WebMCP story (P1.2)', () => {
-  it('boot: exactly the live roster registers (30 = 32 defs minus the consent pair; 19 + nine mediaforge-* studio tools + demo-credits/gpu-burst, 2026-09-03)', async () => {
+  it('boot: exactly the live roster registers (31 = 33 defs minus the consent pair; 19 + nine mediaforge-* studio tools + demo-credits/gpu-burst + iris-produce, 2026-09-03)', async () => {
     const { registry, trace } = setup();
     await registry.reconcile(getStudioStore().getState());
     const registers = trace.filter((e) => e.kind === 'register');
-    expect(registers).toHaveLength(30);
+    expect(registers).toHaveLength(31);
     expect(registers.map((e) => e.tool)).not.toContain('approve-batch');
     expect(registers.map((e) => e.tool)).not.toContain('undo');
     // The first toolchange records the whole roster appearing (the delta
