@@ -51,6 +51,13 @@ covering the whole creative loop across fifteen families:
   connector drives the studio tab they have open. Measured live: a remote `tools/call
   add-text` landed on the canvas of a paired tab within a second. The code is the
   capability — six characters, thirty minutes, one tab, only what the tab exposes.
+- **Observability you can open** — every lane above is probed from OUTSIDE the fleet every
+  five minutes, taking the path a stranger takes (edge → tunnel → relay → service), and the
+  verdicts are on **pulse.aitherium.com/lanes**: bundle, hosted chat, hosted image, IRIS,
+  MediaForge, pairing + remote MCP, the demo governor, both weight mirrors. The page lives
+  in a Cloudflare Worker so it stays answerable when the fleet is not. Deeper proofs
+  (IRIS actually *sees* the image it critiques, the LLM router's backend pins match live
+  containers, the governor fails closed) run as fleet capability probes that page a human.
 - **Memory**: `remember-preference`, `recall-preference`, `search-preferences` (recall by
   meaning with an embedder trained for this studio, running in the tab)
 - **Drafting**: `draft-variants` — N independent takes (headline, tagline, palette,
