@@ -3,7 +3,7 @@
 **Live URL:** https://studio.aitherium.com (GitHub Pages; works in ChatGPT's in-app
 browser and in Chrome 149+ with `chrome://flags/#enable-webmcp-testing`)
 
-**Repo:** https://github.com/Aitherium/webmcp-design-studio (MIT)
+**Repo:** https://github.com/Aitherium/webmcp-design-studio (Business Source License 1.1 — source-available, not open source)
 
 **Demo video:** [YouTube — WebMCP Design Studio walkthrough](https://www.youtube.com/watch?v=9nod3lHdFPo) (0:53, with audio; source `demo/webmcp-demo-2026-09-02.mp4`)
 

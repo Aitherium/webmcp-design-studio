@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite'
 
+import { licenseBanner } from './license-banner.js'
+
 // Extension bundle build — a SINGLE IIFE that works on any page (no React,
 // no store): the gobbonet "add by URL" artifact. Output lands directly in
 // public/ so the app build picks it up into dist/ (vite copies public/*).
 // emptyOutDir is false on purpose: public/ is not a build-owned directory.
 export default defineConfig({
+  plugins: [licenseBanner()],
   build: {
     outDir: 'public',
     emptyOutDir: false,

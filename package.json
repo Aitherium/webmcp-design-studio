@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build --config extension.vite.config.ts && vite build && node scripts/check-built-html.mjs",
+    "build": "tsc -b && vite build --config extension.vite.config.ts && vite build && node scripts/check-built-html.mjs && node scripts/check-license-notice.mjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
@@ -29,5 +29,8 @@
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
-  }
+  },
+  "license": "LicenseRef-BUSL-1.1",
+  "author": "David Parkhurst (Aitherium)",
+  "homepage": "https://studio.aitherium.com"
 }

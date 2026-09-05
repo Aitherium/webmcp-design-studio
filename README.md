@@ -83,4 +83,13 @@ making of this infrastructure. For moral reasons.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Business Source License 1.1 — see [LICENSE](LICENSE).
+
+Source-available, **not** open source. You may read, modify and make
+*non-production* use freely, and production use for personal,
+non-commercial purposes. Any commercial or organizational production use
+— including internal use inside a company, and including offering this or
+substantially similar functionality as a hosted service — requires a
+commercial licence: licensing@aitherium.com
+
+On **2030-02-07** this converts to Apache License 2.0 automatically.
