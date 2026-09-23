@@ -42,6 +42,7 @@ import {
 } from '../cloud/imageProviders';
 import { createHostedChatWorker, createOpenAICompatibleWorker } from './hostedChat';
 import {
+  afterOnDeviceEnabled,
   loadTextAgentConfig,
   saveTextAgentConfig,
   type TextAgentConfig,
@@ -274,6 +275,11 @@ export function BonsaiChat() {
     setAgent({ consent: true });
     try {
       await agentLoader.ensureModel('text', { modelId: chosenModel ?? defaultModel });
+      setTextAgent((prev) => {
+        const next = afterOnDeviceEnabled(prev);
+        saveTextAgentConfig(next);
+        return next;
+      });
       setAgent({ modelId: agentLoader.getSlot() === 'text' ? chosenModel ?? defaultModel : null });
     } catch (err) {
       setAgent({ lastError: err instanceof Error ? err.message : String(err), phase: 'error' });

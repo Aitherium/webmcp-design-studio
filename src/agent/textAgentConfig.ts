@@ -53,3 +53,15 @@ export function saveTextAgentConfig(cfg: TextAgentConfig): void {
     /* quota / private mode — the session continues, unsaved */
   }
 }
+
+/**
+ * The text-agent config after the visitor enables the on-device model.
+ *
+ * Enabling it IS the choice of lane. Until 2026-09-23 the consent chip loaded
+ * the model and left `mode` on the public-origin default 'fleet', so a visitor
+ * downloaded 545 MB and every turn still went to the hosted lane (measured
+ * live: "Demo credits exhausted" answered a visitor whose brain was loaded).
+ */
+export function afterOnDeviceEnabled(cfg: TextAgentConfig): TextAgentConfig {
+  return { ...cfg, mode: 'on-device' };
+}
