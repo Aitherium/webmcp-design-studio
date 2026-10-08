@@ -17,7 +17,7 @@
  * and surfaced through the status callback (StatusBar renders it LOUD).
  */
 import type { ModelContextSurface, ModelContextTool, ProtocolEvent, RegisteredTool, StudioStateLike, ToolDefinition } from './types';
-import { TOOL_DEFINITIONS } from './tools';
+import { allToolDefinitions } from './tools';
 import type { WebMCPStatus } from '../state/store';
 
 export interface RegistryCallbacks {
@@ -67,10 +67,18 @@ export class ToolRegistry {
   /** Synchronize the browser surface with the current store state. */
   private async reconcileNow(state: StudioStateLike): Promise<void> {
     if (this.disposed) return;
-    for (const def of TOOL_DEFINITIONS) {
+    const defs = allToolDefinitions();
+    for (const def of defs) {
       const wanted = !def.available || def.available(state);
       if (wanted) await this.ensureRegistered(def);
       else this.abortTool(def.name);
+    }
+    // A definition that LEFT the roster (a forge-* op media-forge withdrew, or the
+    // whole shelf when media-forge went unreachable) is unregistered too — a
+    // registered tool with no definition behind it is a dead end for the agent.
+    const live = new Set(defs.map((d) => d.name));
+    for (const name of [...this.registered]) {
+      if (!live.has(name)) this.abortTool(name);
     }
     this.emitStatus();
     await this.refreshToolList();

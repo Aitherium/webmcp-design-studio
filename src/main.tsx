@@ -6,6 +6,7 @@ import App from './App.tsx';
 import { installModelContextPolyfill } from './webmcp/polyfill';
 import { detectSurface, ToolRegistry } from './webmcp/registry';
 import { getStudioStore } from './state/store';
+import { loadForgeCatalog, subscribeForge } from './webmcp/tools/forge';
 import { computeEmbed, markEmbedChrome } from './embed';
 import { installEmbedBridge } from './embedBridge';
 import './dev/scriptedAgent'; // window.__judgeScript()
@@ -70,6 +71,14 @@ getStudioStore().subscribe((state, prev) => {
   }
 });
 void registry.reconcile(getStudioStore().getState());
+// The forge-* shelf (media-forge's curated ops, read live from the governor):
+// every load — success OR failure — re-reconciles, so new ops register and a
+// dead backend's tools unregister. Re-read every 5 min so an op media-forge
+// ships reaches an open tab without a reload. A failed read leaves the shelf
+// empty and the rest of the studio untouched.
+subscribeForge(() => void registry.reconcile(getStudioStore().getState()));
+void loadForgeCatalog();
+window.setInterval(() => void loadForgeCatalog(), 5 * 60_000);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

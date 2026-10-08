@@ -29,6 +29,7 @@ import { PRODUCTION_TOOLS } from './production';
 import { VARIANT_TOOLS } from './variants';
 import { DEMO_TOOLS } from './demo';
 import { IRIS_PRODUCE_TOOLS } from './irisProduce';
+import { getForgeTools } from './forge';
 import { getStudioStore } from '../../state/store';
 import { describeDesign } from '../../state/doc';
 
@@ -59,6 +60,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   ...IRIS_PRODUCE_TOOLS, // iris-produce
 ];
 
+/**
+ * Every tool the studio exposes RIGHT NOW: the static roster above plus the
+ * live forge-* shelf (forge.ts), which is read from media-forge's curated
+ * catalogue at runtime — so its length moves when media-forge ships or
+ * withdraws an op, and is zero while media-forge is unreachable.
+ */
+export function allToolDefinitions(): ToolDefinition[] {
+  return [...TOOL_DEFINITIONS, ...getForgeTools()];
+}
+
 /** Agent-readable summary of the whole studio state. */
 export function describeState(state: StudioStateLike): {
   design: ReturnType<typeof describeDesign> | null;
@@ -66,7 +77,7 @@ export function describeState(state: StudioStateLike): {
 } {
   const doc = state.docs.find((d) => d.id === state.currentDocId) ?? null;
   const design = doc ? describeDesign(doc, state.pendingBatch) : null;
-  const toolCount = TOOL_DEFINITIONS.filter((t) => !t.available || t.available(state)).length;
+  const toolCount = allToolDefinitions().filter((t) => !t.available || t.available(state)).length;
   return { design, toolCount };
 }
 

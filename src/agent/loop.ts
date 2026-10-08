@@ -17,7 +17,7 @@
  */
 import type { ChatMessage, ChatWorkerLike, WorkerResponse } from './loader';
 import type { ModelContextSurface, RegisteredTool } from '../webmcp/types';
-import { TOOL_DEFINITIONS } from '../webmcp/tools';
+import { TOOL_DEFINITIONS, allToolDefinitions } from '../webmcp/tools';
 
 export interface ToolSpec {
   name: string;
@@ -215,6 +215,9 @@ function tryParseCallBody(body: string): { name: string; arguments: Record<strin
  * descriptions — tool names carry the meaning. The WebMCP SURFACE path
  * (getTools) is untouched and still serves the full schemas.
  */
+// The live forge-* shelf (forge.ts, ~50 media-forge ops) is deliberately NOT in this
+// compact list: it would multiply the on-device brain's prefill. It IS on the WebMCP
+// surface (browser + paired agents), and createToolExecutor resolves it either way.
 export function toolSpecsFromDefinitions(): ToolSpec[] {
   return TOOL_DEFINITIONS.map((t) => ({
     name: t.name,
@@ -289,9 +292,10 @@ export function createToolExecutor(opts?: {
       return `tool '${name}' is not registered on the WebMCP surface right now — available: ${available}. Call get-design-state or list-designs to see the current state.`;
     }
     // Direct registry path (no WebMCP API at all).
-    const def = TOOL_DEFINITIONS.find((t) => norm(t.name) === norm(name));
+    const defs = allToolDefinitions();
+    const def = defs.find((t) => norm(t.name) === norm(name));
     if (!def) {
-      return `unknown tool '${name}' — available: ${TOOL_DEFINITIONS.map((t) => t.name).join(', ')}`;
+      return `unknown tool '${name}' — available: ${defs.map((t) => t.name).join(', ')}`;
     }
     try {
       const out = await def.execute(args, { signal: new AbortController().signal });
