@@ -12,7 +12,10 @@
  * holds the SINGLE-MODEL SLOT, and a LOUD red row when a load failed (the
  * tier stays disabled for the session — that is the contract).
  */
+import { useSyncExternalStore } from 'react';
 import { useStudio } from '../state/store';
+import { forgeStatusText, getForgeStatus, subscribeForge } from '../webmcp/tools/forge';
+
 
 const TIER_TEXT: Record<string, string> = {
   A: 'Tier A · on-device text+image',
@@ -25,6 +28,7 @@ export function StatusBar() {
   const liveTools = useStudio((s) => s.liveToolNames);
   const runtime = useStudio((s) => s.runtimeStatus);
   const agent = useStudio((s) => s.agent);
+  const forge = useSyncExternalStore(subscribeForge, getForgeStatus, getForgeStatus);
 
   const surface = status?.surface ?? 'off';
   const badgeClass = surface === 'real' ? 'badge badge-real' : surface === 'polyfill' ? 'badge badge-polyfill' : 'badge badge-off';
@@ -48,6 +52,7 @@ export function StatusBar() {
         <span className={badgeClass}>{badgeText}</span>
         <span className="statusbar-tools">{liveTools.length} tool{liveTools.length === 1 ? '' : 's'} live</span>
         <span className="statusbar-runtime">{runtime ?? slotText}</span>
+        <span className="statusbar-forge" title={forge.reason ?? undefined}>{forgeStatusText(forge)}</span>
       </div>
       {agent.phase === 'error' && agent.lastError && (
         <div className="statusbar-failures" role="alert">

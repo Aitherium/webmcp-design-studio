@@ -8,7 +8,7 @@
  * export-design → undo → remember-preference → recall-preference.
  * Every step logs `[judge] step → result` and is recorded in the report.
  */
-import { TOOL_DEFINITIONS } from '../webmcp/tools';
+import { allToolDefinitions } from '../webmcp/tools';
 import type { ToolResult } from '../webmcp/execute-io';
 import { getStudioStore } from '../state/store';
 import { effectiveDoc } from '../state/doc';
@@ -28,7 +28,7 @@ export interface JudgeReport {
 
 /** Default exec: run the tool definition directly (no browser surface). */
 const directExec: JudgeExec = async (name, args) => {
-  const def = TOOL_DEFINITIONS.find((t) => t.name === name);
+  const def = allToolDefinitions().find((t) => t.name === name);
   if (!def) throw new Error(`unknown tool "${name}"`);
   return def.execute(args, { signal: new AbortController().signal });
 };
